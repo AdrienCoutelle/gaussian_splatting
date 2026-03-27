@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Gaussian Splatting"
+readme = "README.md"
+dynamic = ["version"]
+dependencies = [
+  "matplotlib",
+  "torch",
+  "tensorboard",
+  "numpy",
+  "tqdm",
+  "opencv-python",
+  "click",
+  "scikit-image",
+  "pyyaml",
+]
+
+[project.optional-dependencies]
+tests = [
+    "pytest",
+]
+
+[project.scripts]
+launch_gaussian_splatting_training = "gaussian_splatting.launch_training:main"
+launch_gaussian_splatting_inference = "gaussian_splatting.launch_inference:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "gaussian_splatting.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gaussian_splatting"]
+
+[tool.ruff]
+indent-width = 4
+line-length = 120
+
+[tool.ruff.lint]
+select = ["I", "E", "F", "W"]
+
+[tool.ruff.lint.isort]
+section-order = [
+  "future",
+  "standard-library",
+  "third-party",
+  "gaussian_splatting",
+  "first-party",
+  "local-folder"
+]

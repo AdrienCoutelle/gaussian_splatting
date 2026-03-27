@@ -1,0 +1,14 @@
+.github/*
+!.github/workflows/
+!.github/workflows/tests.yml
+*.egg-info
+*.pyc
+
+/scripts
+/datasets
+/output
+/checkpoints
+/.venv
+/.vscode
+*.DS_Store
+/runs
