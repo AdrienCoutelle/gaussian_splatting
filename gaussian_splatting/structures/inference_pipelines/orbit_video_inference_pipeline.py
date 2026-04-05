@@ -7,10 +7,12 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from gaussian_splatting.structures.gaussian import Gaussian
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
+from gaussian_splatting.structures.renderer import Camera, GSRenderer, GSRendererConfig
 
 
 @dataclass
@@ -121,6 +123,7 @@ class OrbitPipelineInferenceParams(InferencePipelineParams):
 class OrbitVideoInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
+        gaussians: list[Gaussian],
         configuration: OrbitPipelineInferenceParams,
         device: torch.device,
         output_folder: str,
@@ -131,6 +134,13 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
             device=device,
             output_folder=output_folder,
             epoch=epoch,
+        )
+
+        self.gaussians = gaussians
+
+        self.renderer = GSRenderer(
+            config=GSRendererConfig(),
+            device=device,
         )
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -147,7 +157,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
             os.path.join(self.output_folder, output_name),
             fourcc,
             self.configuration.fps,
-            (100, 100),
+            (1000, 1000),
         )
 
         self.radius_list = None
@@ -195,9 +205,23 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
                     phi,
                 )
 
-                frame = None  # TODO
+                camera = Camera(
+                    pose=pose,
+                    focal_length=100,
+                    width=1000,
+                    height=1000,
+                )
 
-                self.video_writer.write(frame)
+                frame = self.renderer.render(
+                    camera=camera,
+                    gaussians=self.gaussians,
+                )
+
+                frame_bgr = cv2.cvtColor(
+                    (frame.array * 255).astype(np.uint8),
+                    cv2.COLOR_RGB2BGR,
+                )
+                self.video_writer.write(frame_bgr)
 
             self.video_writer.release()
 
