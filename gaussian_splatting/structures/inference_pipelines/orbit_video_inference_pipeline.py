@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from gaussian_splatting.structures.gaussian import Gaussian
+from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
@@ -123,7 +123,7 @@ class OrbitPipelineInferenceParams(InferencePipelineParams):
 class OrbitVideoInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
-        gaussians: list[Gaussian],
+        gaussian_collection: GaussianCollection,
         configuration: OrbitPipelineInferenceParams,
         device: torch.device,
         output_folder: str,
@@ -136,7 +136,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
             epoch=epoch,
         )
 
-        self.gaussians = gaussians
+        self.gaussian_collection = gaussian_collection
 
         self.renderer = GSRenderer(
             config=GSRendererConfig(),
@@ -214,7 +214,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
 
                 frame = self.renderer.render(
                     camera=camera,
-                    gaussians=self.gaussians,
+                    gaussian_collection=self.gaussian_collection,
                 )
 
                 frame_bgr = cv2.cvtColor(

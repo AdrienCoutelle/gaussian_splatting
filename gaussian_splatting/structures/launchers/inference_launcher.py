@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from gaussian_splatting.structures.device import Device
-from gaussian_splatting.structures.gaussian import Gaussian
+from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
 from gaussian_splatting.structures.inference_pipelines.orbit_video_inference_pipeline import (
     OrbitPipelineInferenceParams,
     OrbitVideoInferencePipeline,
@@ -21,56 +21,58 @@ class InferenceLauncher:
             device=self.device,
         )
 
-        self.gaussians = [
+        gaussians = [
             Gaussian(
-                mean=torch.tensor([0, 0, 0], device=self.device),
+                mean=torch.tensor([0.0, 0.0, 0.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
-                color=torch.tensor((0, 0, 0), device=self.device),
-                opacity=torch.tensor(1, device=self.device),
+                color=torch.tensor([0.0, 0.0, 0.0], device=self.device),
+                opacity=torch.tensor(1.0, device=self.device),
             ),
             Gaussian(
-                mean=torch.tensor([0, 0, 1], device=self.device),
+                mean=torch.tensor([0.0, 0.0, 1.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
-                color=torch.tensor((0, 0, 255), device=self.device),
-                opacity=torch.tensor(1, device=self.device),
+                color=torch.tensor([0.0, 0.0, 1.0], device=self.device),
+                opacity=torch.tensor(1.0, device=self.device),
             ),
             Gaussian(
-                mean=torch.tensor([0, 1, 0], device=self.device),
+                mean=torch.tensor([0.0, 1.0, 0.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
-                color=torch.tensor((0, 255, 0), device=self.device),
-                opacity=torch.tensor(1, device=self.device),
+                color=torch.tensor([0.0, 1.0, 0.0], device=self.device),
+                opacity=torch.tensor(1.0, device=self.device),
             ),
             Gaussian(
-                mean=torch.tensor([0, 1, 1], device=self.device),
+                mean=torch.tensor([0.0, 1.0, 1.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
-                color=torch.tensor((0, 255, 255), device=self.device),
-                opacity=torch.tensor(1, device=self.device),
+                color=torch.tensor([0.0, 1.0, 1.0], device=self.device),
+                opacity=torch.tensor(1.0, device=self.device),
             ),
             Gaussian(
-                mean=torch.tensor([1, 0, 0], device=self.device),
+                mean=torch.tensor([1.0, 0.0, 0.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
-                color=torch.tensor((255, 0, 0), device=self.device),
-                opacity=torch.tensor(1, device=self.device),
+                color=torch.tensor([1.0, 0.0, 0.0], device=self.device),
+                opacity=torch.tensor(1.0, device=self.device),
             ),
             Gaussian(
-                mean=torch.tensor([1, 0, 1], device=self.device),
+                mean=torch.tensor([1.0, 0.0, 1.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
-                color=torch.tensor((255, 0, 255), device=self.device),
-                opacity=torch.tensor(1, device=self.device),
+                color=torch.tensor([1.0, 0.0, 1.0], device=self.device),
+                opacity=torch.tensor(1.0, device=self.device),
             ),
             Gaussian(
-                mean=torch.tensor([1, 1, 0], device=self.device),
+                mean=torch.tensor([1.0, 1.0, 0.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
-                color=torch.tensor((255, 255, 0), device=self.device),
-                opacity=torch.tensor(1, device=self.device),
+                color=torch.tensor([1.0, 1.0, 0.0], device=self.device),
+                opacity=torch.tensor(1.0, device=self.device),
             ),
             Gaussian(
-                mean=torch.tensor([1, 1, 1], device=self.device),
+                mean=torch.tensor([1.0, 1.0, 1.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
-                color=torch.tensor((255, 255, 255), device=self.device),
-                opacity=torch.tensor(1, device=self.device),
+                color=torch.tensor([1.0, 1.0, 1.0], device=self.device),
+                opacity=torch.tensor(1.0, device=self.device),
             ),
         ]
+
+        self.gaussian_collection = GaussianCollection(gaussians)
 
     def run(self) -> None:
         pipeline_config = OrbitPipelineInferenceParams(
@@ -87,7 +89,7 @@ class InferenceLauncher:
         )
 
         pipeline = OrbitVideoInferencePipeline(
-            gaussians=self.gaussians,
+            gaussian_collection=self.gaussian_collection,
             configuration=pipeline_config,
             device=self.device,
             output_folder="./output",
