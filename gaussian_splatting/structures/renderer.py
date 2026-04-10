@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussian
 
 
 @dataclass
@@ -36,18 +36,6 @@ class ScreenSpaceGaussian:
     opacity: torch.Tensor
 
 
-@dataclass
-class ScreenSpaceGaussianCollection:
-    means_2d: torch.Tensor
-    covariances_2d: torch.Tensor
-    depths: torch.Tensor
-    colors: torch.Tensor
-    opacities: torch.Tensor
-
-    def __len__(self) -> int:
-        return int(self.depths.shape[0])
-
-
 class GSRenderer:
     def __init__(
         self,
@@ -60,16 +48,16 @@ class GSRenderer:
     def render(
         self,
         camera: Camera,
-        gaussian_collection: GaussianCollection,
+        gaussians: list[Gaussian],
     ) -> Image:
         camera_space_gaussians = self._transform_to_camera_space(
             camera=camera,
-            gaussian_collection=gaussian_collection,
+            gaussians=gaussians,
         )
 
         screen_space_gaussians = self._project_to_screen_space(
             camera=camera,
-            gaussian_collection=camera_space_gaussians,
+            gaussians=camera_space_gaussians,
         )
 
         output_image = torch.zeros(
@@ -78,11 +66,16 @@ class GSRenderer:
             dtype=torch.float32,
         )
 
-        for gaussian in self._sort_back_to_front(screen_space_gaussians):
-            self._splat_gaussian(
-                image=output_image,
-                gaussian=gaussian,
-            )
+        depths = torch.tensor([g.depth for g in screen_space_gaussians], device=self.device)
+        sorted_indices = torch.argsort(depths, descending=False)  # Near to far for front-to-back compositing
+
+        self._splat_gaussians_vectorized(
+            image=output_image,
+            gaussians=screen_space_gaussians,
+            sorted_indices=sorted_indices,
+            image_height=camera.h,
+            image_width=camera.w,
+        )
 
         return Image(
             array=output_image.clamp(0.0, 1.0).detach().cpu().numpy(),
@@ -91,173 +84,150 @@ class GSRenderer:
     def _transform_to_camera_space(
         self,
         camera: Camera,
-        gaussian_collection: GaussianCollection,
-    ) -> GaussianCollection:
-        """Transform world-space gaussians into camera space."""
-        world_to_camera = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32).transpose(0, 1)
-        camera_position = camera.pose[:3, 3].to(device=self.device, dtype=torch.float32)
+        gaussians: list[Gaussian],
+    ) -> list[Gaussian]:
+        output_gaussians = []
 
-        means = gaussian_collection.means.to(device=self.device, dtype=torch.float32)
-        covariances = gaussian_collection.covariances.to(device=self.device, dtype=torch.float32)
-        colors = gaussian_collection.colors.to(device=self.device, dtype=torch.float32)
-        opacities = gaussian_collection.opacities.to(device=self.device, dtype=torch.float32)
+        for gaussian in gaussians:
+            # p_camera = R^T @ (p_world - t)
+            world_to_camera = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32).transpose(0, 1)
+            camera_position = camera.pose[:3, 3].to(device=self.device, dtype=torch.float32)
 
-        centered_means = means - camera_position.unsqueeze(0)
-        camera_means = centered_means @ world_to_camera.transpose(0, 1)
-        camera_covariances = torch.einsum(
-            "ij,njk,kl->nil",
-            world_to_camera,
-            covariances,
-            world_to_camera.transpose(0, 1),
-        )
+            mean = gaussian.mean.to(device=self.device, dtype=torch.float32)
+            covariance = gaussian.covariance.to(device=self.device, dtype=torch.float32)
+            color = gaussian.color.to(device=self.device, dtype=torch.float32)
+            opacity = gaussian.opacity.to(device=self.device, dtype=torch.float32)
 
-        return GaussianCollection.from_tensors(
-            means=camera_means,
-            covariances=camera_covariances,
-            colors=colors,
-            opacities=opacities,
-        )
+            camera_mean = world_to_camera @ (mean - camera_position)
+            camera_covariance = world_to_camera @ covariance @ world_to_camera.transpose(0, 1)
+
+            output_gaussians.append(
+                Gaussian(
+                    mean=camera_mean,
+                    covariance=camera_covariance,
+                    color=color,
+                    opacity=opacity,
+                )
+            )
+
+        return output_gaussians
 
     def _project_to_screen_space(
         self,
         camera: Camera,
-        gaussian_collection: GaussianCollection,
-    ) -> ScreenSpaceGaussianCollection:
-        """Project camera-space gaussians into 2D image space.
-
-        This follows the standard Gaussian splatting steps:
-        - perspective projection of the 3D mean,
-        - Jacobian-based projection of the 3D covariance,
-        - small diagonal regularization for numerical stability.
-        """
-        if len(gaussian_collection) == 0:
-            return self._empty_screen_space_gaussians()
-
+        gaussians: list[Gaussian],
+    ) -> list[ScreenSpaceGaussian]:
         principal_point_x = camera.w / 2.0
         principal_point_y = camera.h / 2.0
 
-        camera_means = gaussian_collection.means
-        depths = -camera_means[:, 2]
-        valid_mask = depths > self.config.near_plane
+        output_gaussians = []
 
-        if not torch.any(valid_mask):
-            return self._empty_screen_space_gaussians()
+        for gaussian in gaussians:
+            camera_mean = gaussian.mean
+            depth = -camera_mean[2].item()
 
-        valid_means = camera_means[valid_mask]
-        valid_depths = depths[valid_mask]
-        valid_covariances = gaussian_collection.covariances[valid_mask]
-        valid_colors = gaussian_collection.colors[valid_mask]
-        valid_opacities = gaussian_collection.opacities[valid_mask]
+            if depth <= self.config.near_plane:
+                continue
 
-        mean_x = camera.f * (valid_means[:, 0] / valid_depths) + principal_point_x
-        mean_y = principal_point_y - camera.f * (valid_means[:, 1] / valid_depths)
-        means_2d = torch.stack([mean_x, mean_y], dim=-1)
-
-        jacobians = torch.zeros(
-            (valid_means.shape[0], 2, 3),
-            device=self.device,
-            dtype=torch.float32,
-        )
-        jacobians[:, 0, 0] = camera.f / valid_depths
-        jacobians[:, 0, 2] = camera.f * valid_means[:, 0] / (valid_depths**2)
-        jacobians[:, 1, 1] = -camera.f / valid_depths
-        jacobians[:, 1, 2] = -camera.f * valid_means[:, 1] / (valid_depths**2)
-
-        covariance_2d = torch.einsum(
-            "nij,njk,nlk->nil",
-            jacobians,
-            valid_covariances,
-            jacobians,
-        )
-        covariance_2d[:, 0, 0] += self.config.covariance_regularization
-        covariance_2d[:, 1, 1] += self.config.covariance_regularization
-
-        return ScreenSpaceGaussianCollection(
-            means_2d=means_2d,
-            covariances_2d=covariance_2d,
-            depths=valid_depths,
-            colors=valid_colors,
-            opacities=valid_opacities,
-        )
-
-    def _sort_back_to_front(
-        self,
-        gaussian_collection: ScreenSpaceGaussianCollection,
-    ) -> list[ScreenSpaceGaussian]:
-        if len(gaussian_collection) == 0:
-            return []
-
-        sorted_indices = torch.argsort(gaussian_collection.depths, descending=True)
-
-        return [
-            ScreenSpaceGaussian(
-                mean_2d=gaussian_collection.means_2d[index],
-                covariance_2d=gaussian_collection.covariances_2d[index],
-                depth=float(gaussian_collection.depths[index].item()),
-                color=gaussian_collection.colors[index],
-                opacity=gaussian_collection.opacities[index],
+            mean_2d = torch.tensor(
+                [
+                    camera.f * (camera_mean[0] / depth) + principal_point_x,
+                    principal_point_y - camera.f * (camera_mean[1] / depth),
+                ],
+                device=self.device,
+                dtype=torch.float32,
             )
-            for index in sorted_indices.tolist()
-        ]
 
-    def _splat_gaussian(
+            jacobian = torch.tensor(
+                [
+                    [camera.f / depth, 0.0, camera.f * camera_mean[0] / (depth**2)],
+                    [0.0, -camera.f / depth, -camera.f * camera_mean[1] / (depth**2)],
+                ],
+                device=self.device,
+                dtype=torch.float32,
+            )
+
+            covariance_2d = jacobian @ gaussian.covariance @ jacobian.transpose(0, 1)
+            covariance_2d += torch.eye(2, device=self.device) * self.config.covariance_regularization
+
+            output_gaussians.append(
+                ScreenSpaceGaussian(
+                    mean_2d=mean_2d,
+                    covariance_2d=covariance_2d,
+                    depth=depth,
+                    color=gaussian.color,
+                    opacity=gaussian.opacity,
+                )
+            )
+
+        return output_gaussians
+
+    def _splat_gaussians_vectorized(
         self,
         image: torch.Tensor,
-        gaussian: ScreenSpaceGaussian,
+        gaussians: list[ScreenSpaceGaussian],
+        sorted_indices: torch.Tensor,
+        image_height: int,
+        image_width: int,
     ) -> None:
-        determinant = torch.linalg.det(gaussian.covariance_2d)
-        if determinant <= 0:
-            return
-
-        inverse_covariance = torch.linalg.inv(gaussian.covariance_2d)
-
-        std_x = float(torch.sqrt(gaussian.covariance_2d[0, 0]).item())
-        std_y = float(torch.sqrt(gaussian.covariance_2d[1, 1]).item())
-
-        x_min = max(
-            0,
-            int(np.floor(float(gaussian.mean_2d[0].item() - self.config.gaussian_extent * std_x))),
+        y_coords, x_coords = torch.meshgrid(
+            torch.arange(image_height, device=self.device, dtype=torch.float32),
+            torch.arange(image_width, device=self.device, dtype=torch.float32),
+            indexing="ij",
         )
-        x_max = min(
-            image.shape[1],
-            int(np.ceil(float(gaussian.mean_2d[0].item() + self.config.gaussian_extent * std_x))),
-        )
-        y_min = max(
-            0,
-            int(np.floor(float(gaussian.mean_2d[1].item() - self.config.gaussian_extent * std_y))),
-        )
-        y_max = min(
-            image.shape[0],
-            int(np.ceil(float(gaussian.mean_2d[1].item() + self.config.gaussian_extent * std_y))),
-        )
+        pixel_positions = torch.stack([x_coords, y_coords], dim=-1) + 0.5
 
-        if x_max <= x_min or y_max <= y_min:
-            return
+        transmittance = torch.ones((image_height, image_width), device=self.device, dtype=torch.float32)
 
-        xs = torch.arange(x_min, x_max, device=self.device)
-        ys = torch.arange(y_min, y_max, device=self.device)
-        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
-        sample_positions = torch.stack([grid_x, grid_y], dim=-1).to(dtype=torch.float32) + 0.5
+        for idx in sorted_indices:
+            gaussian = gaussians[idx.item()]
 
-        deltas = sample_positions - gaussian.mean_2d
-        exponent = -0.5 * torch.einsum(
-            "...i,ij,...j->...",
-            deltas,
-            inverse_covariance,
-            deltas,
-        )
+            mean_2d = gaussian.mean_2d
+            cov_2d = gaussian.covariance_2d
 
-        opacity = gaussian.opacity.reshape(1).to(dtype=torch.float32)
-        alpha = (opacity * torch.exp(exponent)).unsqueeze(-1).clamp(0.0, 1.0)
+            # Compute bounding box based on gaussian extent
+            # Use conservative estimate: sqrt(max diagonal element + off-diagonal contribution)
+            max_variance = torch.max(cov_2d[0, 0], cov_2d[1, 1]) + torch.abs(cov_2d[0, 1])
+            max_extent = self.config.gaussian_extent * torch.sqrt(max_variance)
 
-        image_patch = image[y_min:y_max, x_min:x_max]
-        image[y_min:y_max, x_min:x_max] = gaussian.color * alpha + image_patch * (1.0 - alpha)
+            min_x = int(torch.floor(mean_2d[0] - max_extent).item())
+            max_x = int(torch.ceil(mean_2d[0] + max_extent).item())
+            min_y = int(torch.floor(mean_2d[1] - max_extent).item())
+            max_y = int(torch.ceil(mean_2d[1] + max_extent).item())
 
-    def _empty_screen_space_gaussians(self) -> ScreenSpaceGaussianCollection:
-        return ScreenSpaceGaussianCollection(
-            means_2d=torch.empty((0, 2), device=self.device, dtype=torch.float32),
-            covariances_2d=torch.empty((0, 2, 2), device=self.device, dtype=torch.float32),
-            depths=torch.empty((0,), device=self.device, dtype=torch.float32),
-            colors=torch.empty((0, 3), device=self.device, dtype=torch.float32),
-            opacities=torch.empty((0,), device=self.device, dtype=torch.float32),
-        )
+            # Clip to image bounds
+            min_x = max(0, min_x)
+            max_x = min(image_width, max_x)
+            min_y = max(0, min_y)
+            max_y = min(image_height, max_y)
+
+            if min_x >= max_x or min_y >= max_y:
+                continue
+
+            # Extract relevant pixel positions
+            pixels = pixel_positions[min_y:max_y, min_x:max_x]
+
+            # Compute difference from mean
+            delta = pixels - mean_2d
+
+            # Compute inverse covariance
+            cov_inv = torch.linalg.inv(cov_2d)
+
+            # Mahalanobis distance: (x-μ)^T Σ^-1 (x-μ)
+            mahalanobis = torch.sum(delta @ cov_inv * delta, dim=-1)
+
+            # Gaussian weight
+            weight = torch.exp(-0.5 * mahalanobis)
+
+            # Apply opacity and clamp to valid range
+            alpha = torch.clamp(weight * gaussian.opacity, 0.0, 1.0)
+
+            # Alpha compositing (front to back)
+            current_transmittance = transmittance[min_y:max_y, min_x:max_x]
+            contribution = alpha * current_transmittance
+
+            # Update image
+            image[min_y:max_y, min_x:max_x] += contribution.unsqueeze(-1) * gaussian.color
+
+            # Update transmittance
+            transmittance[min_y:max_y, min_x:max_x] *= 1.0 - alpha

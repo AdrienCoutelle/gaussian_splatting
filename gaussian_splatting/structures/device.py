@@ -13,9 +13,10 @@ class Device:
         if cls.device is not None:
             return cls.device
 
+        torch.set_default_dtype(torch.float32)
+
         if torch.backends.mps.is_available():
             cls.device = torch.device("mps")
-            torch.set_default_dtype(torch.float32)
             logger.info("Using device: MPS (Apple Silicon)")
         elif torch.cuda.is_available():
             cls.device = torch.device("cuda")

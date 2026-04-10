@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from gaussian_splatting.structures.device import Device
-from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussian
 from gaussian_splatting.structures.inference_pipelines.orbit_video_inference_pipeline import (
     OrbitPipelineInferenceParams,
     OrbitVideoInferencePipeline,
@@ -21,7 +21,7 @@ class InferenceLauncher:
             device=self.device,
         )
 
-        gaussians = [
+        self.gaussians = [
             Gaussian(
                 mean=torch.tensor([0.0, 0.0, 0.0], device=self.device),
                 covariance=torch.from_numpy(np.eye(3)) / 100,
@@ -72,8 +72,6 @@ class InferenceLauncher:
             ),
         ]
 
-        self.gaussian_collection = GaussianCollection(gaussians)
-
     def run(self) -> None:
         pipeline_config = OrbitPipelineInferenceParams(
             center=[0, 0, 0],
@@ -89,7 +87,7 @@ class InferenceLauncher:
         )
 
         pipeline = OrbitVideoInferencePipeline(
-            gaussian_collection=self.gaussian_collection,
+            gaussians=self.gaussians,
             configuration=pipeline_config,
             device=self.device,
             output_folder="./output",
