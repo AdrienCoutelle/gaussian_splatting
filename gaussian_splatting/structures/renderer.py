@@ -67,7 +67,7 @@ class GSRenderer:
         )
 
         depths = torch.tensor([g.depth for g in screen_space_gaussians], device=self.device)
-        sorted_indices = torch.argsort(depths, descending=False)  # Near to far for front-to-back compositing
+        sorted_indices = torch.argsort(depths, descending=False)
 
         self._splat_gaussians_vectorized(
             image=output_image,
