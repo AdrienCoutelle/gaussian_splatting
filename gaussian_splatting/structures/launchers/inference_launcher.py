@@ -9,6 +9,7 @@ from gaussian_splatting.structures.inference_pipelines.orbit_video_inference_pip
 )
 from gaussian_splatting.structures.renderer import GSRenderer, GSRendererConfig
 from gaussian_splatting.utils.logger import Logger
+from gaussian_splatting.utils.profiler import Profiler
 
 logger = Logger("INFERENCE_LAUNCHER")
 
@@ -46,6 +47,8 @@ class InferenceLauncher:
         )
 
         pipeline.run()
+
+        Profiler.print_stats()
 
     def _create_gaussians(
         self,

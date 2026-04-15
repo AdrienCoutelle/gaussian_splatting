@@ -5,6 +5,7 @@ import torch
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian
+from gaussian_splatting.utils.profiler import profile
 
 
 @dataclass
@@ -36,6 +37,7 @@ class ScreenSpaceGaussian:
     opacity: torch.Tensor
 
 
+@profile
 class GSRenderer:
     def __init__(
         self,
