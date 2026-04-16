@@ -207,7 +207,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
 
                 camera = Camera(
                     pose=pose,
-                    focal_length=100,
+                    focal_length=200,
                     width=1000,
                     height=1000,
                 )

@@ -41,5 +41,17 @@ class GaussianCollection:
     def opacites(self) -> torch.Tensor:
         return self.opacities
 
+    def to_list(self) -> list[Gaussian]:
+        """Convert the collection back to a list of individual Gaussians."""
+        return [
+            Gaussian(
+                mean=self.means[i],
+                covariance=self.covariances[i],
+                color=self.colors[i],
+                opacity=self.opacities[i],
+            )
+            for i in range(len(self))
+        ]  # fmt:skip
+
     def __len__(self) -> int:
         return int(self.means.shape[0])

@@ -22,7 +22,7 @@ def main(
     # config: InferenceConfig = InferenceConfig.from_dict(config_dict)
     # logger.info("Inference configuration loaded.")
 
-    launcher = InferenceLauncher(file_path="some_path")
+    launcher = InferenceLauncher(ply_path="datasets/fly.ply")
     launcher.run()
 
 

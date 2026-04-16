@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian
@@ -52,14 +53,35 @@ class GSRenderer:
         camera: Camera,
         gaussians: list[Gaussian],
     ) -> Image:
+        print(f"Rendering {len(gaussians)} Gaussians...")
+
+        # Debug: Check gaussian properties
+        if len(gaussians) > 0:
+            sample_gaussian = gaussians[0]
+            print(f"Sample Gaussian - Color: {sample_gaussian.color}, Opacity: {sample_gaussian.opacity}")
+            print(
+                f"Color range: [{min(g.color.min().item() for g in gaussians[:100]):.4f}, "
+                f"{max(g.color.max().item() for g in gaussians[:100]):.4f}]"
+            )
+            print(
+                f"Opacity range: [{min(g.opacity.item() for g in gaussians[:100]):.4f}, "
+                f"{max(g.opacity.item() for g in gaussians[:100]):.4f}]"
+            )
+
         camera_space_gaussians = self._transform_to_camera_space(
             camera=camera,
             gaussians=gaussians,
         )
+        print("Transformed to camera space.")
 
         screen_space_gaussians = self._project_to_screen_space(
             camera=camera,
             gaussians=camera_space_gaussians,
+        )
+
+        print(
+            f"Projected to screen space. {len(screen_space_gaussians)} "
+            "Gaussians are in front of the camera and will be rendered."
         )
 
         output_image = torch.zeros(
@@ -71,6 +93,8 @@ class GSRenderer:
         depths = torch.tensor([g.depth for g in screen_space_gaussians], device=self.device)
         sorted_indices = torch.argsort(depths, descending=False)
 
+        print(f"Rendering {len(screen_space_gaussians)} Gaussians...")
+
         self._splat_gaussians_vectorized(
             image=output_image,
             gaussians=screen_space_gaussians,
@@ -78,6 +102,8 @@ class GSRenderer:
             image_height=camera.h,
             image_width=camera.w,
         )
+
+        print("Finished rendering.")
 
         return Image(
             array=output_image.clamp(0.0, 1.0).detach().cpu().numpy(),
@@ -90,7 +116,7 @@ class GSRenderer:
     ) -> list[Gaussian]:
         output_gaussians = []
 
-        for gaussian in gaussians:
+        for gaussian in tqdm(gaussians, desc="Transforming to camera space"):
             # p_camera = R^T @ (p_world - t)
             world_to_camera = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32).transpose(0, 1)
             camera_position = camera.pose[:3, 3].to(device=self.device, dtype=torch.float32)
@@ -124,7 +150,7 @@ class GSRenderer:
 
         output_gaussians = []
 
-        for gaussian in gaussians:
+        for gaussian in tqdm(gaussians, desc="Projecting to screen space"):
             camera_mean = gaussian.mean
             depth = -camera_mean[2].item()
 
@@ -181,7 +207,7 @@ class GSRenderer:
 
         transmittance = torch.ones((image_height, image_width), device=self.device, dtype=torch.float32)
 
-        for idx in sorted_indices:
+        for idx in tqdm(sorted_indices, desc="Splatting Gaussians"):
             gaussian = gaussians[idx.item()]
 
             mean_2d = gaussian.mean_2d
