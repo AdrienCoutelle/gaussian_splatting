@@ -3,6 +3,7 @@ from enum import StrEnum
 
 import torch
 
+from gaussian_splatting.structures.gaussian import Gaussian
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
@@ -72,6 +73,7 @@ class InferencePipelineConfig:
 class InferencePipelineFactory:
     @staticmethod
     def create(
+        gaussians: list[Gaussian],
         configuration: InferencePipelineConfig,
         device: torch.device,
         output_folder: str,
@@ -82,6 +84,7 @@ class InferencePipelineFactory:
         if pipeline_name == InferencePipelineName.POSITION:
             assert isinstance(configuration.parameters, SingleImageInferencePipelineParams)
             return SingleImageInferencePipeline(
+                gaussians=gaussians,
                 configuration=configuration.parameters,
                 device=device,
                 output_folder=output_folder,
@@ -91,6 +94,7 @@ class InferencePipelineFactory:
         if pipeline_name == InferencePipelineName.ORBIT:
             assert isinstance(configuration.parameters, OrbitPipelineInferenceParams)
             return OrbitVideoInferencePipeline(
+                gaussians=gaussians,
                 configuration=configuration.parameters,
                 output_folder=output_folder,
                 device=device,

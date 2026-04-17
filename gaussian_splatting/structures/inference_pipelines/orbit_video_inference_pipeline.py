@@ -157,7 +157,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
             os.path.join(self.output_folder, output_name),
             fourcc,
             self.configuration.fps,
-            (1000, 1000),
+            (100, 100),
         )
 
         self.radius_list = None
@@ -187,14 +187,12 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
 
     def run(self) -> None:
         with torch.no_grad():
-            for i, (radius, theta, phi) in tqdm(
-                enumerate(
-                    zip(
-                        self.radius_list,
-                        self.theta_list,
-                        self.phi_list,
-                        strict=True,
-                    )
+            for radius, theta, phi in tqdm(
+                zip(
+                    self.radius_list,
+                    self.theta_list,
+                    self.phi_list,
+                    strict=True,
                 ),
                 total=len(self.radius_list),
                 desc="Generating video...",
@@ -208,8 +206,8 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
                 camera = Camera(
                     pose=pose,
                     focal_length=200,
-                    width=1000,
-                    height=1000,
+                    width=100,
+                    height=100,
                 )
 
                 frame = self.renderer.render(
