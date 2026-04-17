@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import Gaussian
+from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
 from gaussian_splatting.utils.profiler import profile
 
 
@@ -92,9 +92,12 @@ class GSRenderer:
         camera: Camera,
         gaussians: list[Gaussian],
     ) -> Image:
+
+        gaussian_collection = GaussianCollection(gaussians=gaussians)
+
         camera_space_gaussians = self._transform_to_camera_space(
             camera=camera,
-            gaussians=gaussians,
+            gaussians=gaussian_collection,
         )
 
         screen_space_gaussians = self._project_to_screen_space(
@@ -126,81 +129,93 @@ class GSRenderer:
     def _transform_to_camera_space(
         self,
         camera: Camera,
-        gaussians: list[Gaussian],
-    ) -> list[Gaussian]:
-        output_gaussians = []
-
+        gaussians: GaussianCollection,
+    ) -> GaussianCollection:
         world_to_camera = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32).transpose(0, 1)
         camera_position = camera.pose[:3, 3].to(device=self.device, dtype=torch.float32)
 
-        for gaussian in tqdm(gaussians, desc="Transforming to camera space", leave=False):
-            # p_camera = R^T @ (p_world - t)
-            mean = gaussian.mean.to(device=self.device, dtype=torch.float32)
-            covariance = gaussian.covariance.to(device=self.device, dtype=torch.float32)
-            color = gaussian.color.to(device=self.device, dtype=torch.float32)
-            opacity = gaussian.opacity.to(device=self.device, dtype=torch.float32)
+        means = gaussians.means.to(device=self.device, dtype=torch.float32)
+        covariances = gaussians.covariances.to(device=self.device, dtype=torch.float32)
+        colors = gaussians.colors.to(device=self.device, dtype=torch.float32)
+        opacities = gaussians.opacities.to(device=self.device, dtype=torch.float32)
 
-            camera_mean = world_to_camera @ (mean - camera_position)
-            camera_covariance = world_to_camera @ covariance @ world_to_camera.transpose(0, 1)
+        # Transform all means at once: p_camera = R^T @ (p_world - t)
+        # means: (N, 3), camera_position: (3,) -> (N, 3)
+        camera_means = (means - camera_position) @ world_to_camera.T
 
-            output_gaussians.append(
-                Gaussian(
-                    mean=camera_mean,
-                    covariance=camera_covariance,
-                    color=color,
-                    opacity=opacity,
-                )
-            )
+        # Transform all covariances at once: R^T @ Σ @ R
+        # covariances: (N, 3, 3), world_to_camera: (3, 3)
+        camera_covariances = world_to_camera @ covariances @ world_to_camera.T
 
-        return output_gaussians
+        return GaussianCollection.from_tensors(
+            means=camera_means,
+            covariances=camera_covariances,
+            colors=colors,
+            opacities=opacities,
+        )
 
     def _project_to_screen_space(
         self,
         camera: Camera,
-        gaussians: list[Gaussian],
+        gaussians: GaussianCollection,
     ) -> list[ScreenSpaceGaussian]:
         principal_point_x = camera.w / 2.0
         principal_point_y = camera.h / 2.0
 
-        output_gaussians = []
+        # Extract camera means (N, 3)
+        camera_means = gaussians.means
+        depths = -camera_means[:, 2]
 
-        for gaussian in tqdm(gaussians, desc="Projecting to screen space", leave=False):
-            camera_mean = gaussian.mean
-            depth = -camera_mean[2].item()
+        # Filter out gaussians behind the near plane
+        valid_mask = depths > self.config.near_plane
+        valid_indices = torch.nonzero(valid_mask, as_tuple=True)[0]
 
-            if depth <= self.config.near_plane:
-                continue
+        if len(valid_indices) == 0:
+            return []
 
-            mean_2d = torch.tensor(
-                [
-                    camera.f * (camera_mean[0] / depth) + principal_point_x,
-                    principal_point_y - camera.f * (camera_mean[1] / depth),
-                ],
-                device=self.device,
-                dtype=torch.float32,
+        # Filter all tensors
+        valid_means = camera_means[valid_indices]
+        valid_covariances = gaussians.covariances[valid_indices]
+        valid_colors = gaussians.colors[valid_indices]
+        valid_opacities = gaussians.opacities[valid_indices]
+        valid_depths = depths[valid_indices]
+
+        # Project to 2D (N, 2)
+        means_2d = torch.stack(
+            [
+                camera.f * (valid_means[:, 0] / valid_depths) + principal_point_x,
+                principal_point_y - camera.f * (valid_means[:, 1] / valid_depths),
+            ],
+            dim=1,
+        )
+
+        # Compute Jacobian for all gaussians at once (N, 2, 3)
+        N = len(valid_indices)
+        jacobians = torch.zeros((N, 2, 3), device=self.device, dtype=torch.float32)
+        jacobians[:, 0, 0] = camera.f / valid_depths
+        jacobians[:, 0, 2] = camera.f * valid_means[:, 0] / (valid_depths**2)
+        jacobians[:, 1, 1] = -camera.f / valid_depths
+        jacobians[:, 1, 2] = -camera.f * valid_means[:, 1] / (valid_depths**2)
+
+        # Compute 2D covariances: J @ Σ @ J^T for all gaussians
+        # jacobians: (N, 2, 3), valid_covariances: (N, 3, 3)
+        covariances_2d = torch.bmm(torch.bmm(jacobians, valid_covariances), jacobians.transpose(1, 2))
+
+        # Add regularization
+        # regularization = torch.eye(2, device=self.device, dtype=torch.float32) * self.config.covariance_regularization
+        # covariances_2d += regularization.unsqueeze(0)
+
+        # Create list of ScreenSpaceGaussian objects
+        output_gaussians = [
+            ScreenSpaceGaussian(
+                mean_2d=means_2d[i],
+                covariance_2d=covariances_2d[i],
+                depth=valid_depths[i].item(),
+                color=valid_colors[i],
+                opacity=valid_opacities[i],
             )
-
-            jacobian = torch.tensor(
-                [
-                    [camera.f / depth, 0.0, camera.f * camera_mean[0] / (depth**2)],
-                    [0.0, -camera.f / depth, -camera.f * camera_mean[1] / (depth**2)],
-                ],
-                device=self.device,
-                dtype=torch.float32,
-            )
-
-            covariance_2d = jacobian @ gaussian.covariance @ jacobian.transpose(0, 1)
-            covariance_2d += torch.eye(2, device=self.device) * self.config.covariance_regularization
-
-            output_gaussians.append(
-                ScreenSpaceGaussian(
-                    mean_2d=mean_2d,
-                    covariance_2d=covariance_2d,
-                    depth=depth,
-                    color=gaussian.color,
-                    opacity=gaussian.opacity,
-                )
-            )
+            for i in range(N)
+        ]
 
         return output_gaussians
 
