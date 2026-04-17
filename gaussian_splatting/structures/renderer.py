@@ -24,9 +24,48 @@ class Image:
 
 @dataclass
 class GSRendererConfig:
+    width: int
+    height: int
+    focal_length: float
     near_plane: float = 1e-4
     covariance_regularization: float = 0.3
     gaussian_extent: float = 3.0
+
+    @classmethod
+    def from_dict(
+        cls,
+        config_dict: dict,
+    ) -> "GSRendererConfig":
+        if not isinstance(config_dict, dict):
+            raise ValueError(f"GSRendererConfig must be a dictionary, got '{type(config_dict).__name__}'.")
+
+        mandatory_fields = {
+            "width",
+            "height",
+            "focal_length",
+        }
+        if not set(config_dict.keys()).issuperset(mandatory_fields):
+            missing_fields = mandatory_fields - set(config_dict.keys())
+            raise ValueError(
+                f"GSRendererConfig is missing the following mandatory fields: {', '.join(missing_fields)}, "
+                f"got {', '.join(config_dict.keys())}."
+            )
+
+        width = config_dict["width"]
+        height = config_dict["height"]
+        focal_length = config_dict["focal_length"]
+        near_plane = config_dict.get("near_plane", 1e-4)
+        covariance_regularization = config_dict.get("covariance_regularization", 0.3)
+        gaussian_extent = config_dict.get("gaussian_extent", 3.0)
+
+        return GSRendererConfig(
+            width=width,
+            height=height,
+            focal_length=focal_length,
+            near_plane=near_plane,
+            covariance_regularization=covariance_regularization,
+            gaussian_extent=gaussian_extent,
+        )
 
 
 @dataclass
@@ -53,35 +92,14 @@ class GSRenderer:
         camera: Camera,
         gaussians: list[Gaussian],
     ) -> Image:
-        print(f"Rendering {len(gaussians)} Gaussians...")
-
-        # Debug: Check gaussian properties
-        if len(gaussians) > 0:
-            sample_gaussian = gaussians[0]
-            print(f"Sample Gaussian - Color: {sample_gaussian.color}, Opacity: {sample_gaussian.opacity}")
-            print(
-                f"Color range: [{min(g.color.min().item() for g in gaussians[:100]):.4f}, "
-                f"{max(g.color.max().item() for g in gaussians[:100]):.4f}]"
-            )
-            print(
-                f"Opacity range: [{min(g.opacity.item() for g in gaussians[:100]):.4f}, "
-                f"{max(g.opacity.item() for g in gaussians[:100]):.4f}]"
-            )
-
         camera_space_gaussians = self._transform_to_camera_space(
             camera=camera,
             gaussians=gaussians,
         )
-        print("Transformed to camera space.")
 
         screen_space_gaussians = self._project_to_screen_space(
             camera=camera,
             gaussians=camera_space_gaussians,
-        )
-
-        print(
-            f"Projected to screen space. {len(screen_space_gaussians)} "
-            "Gaussians are in front of the camera and will be rendered."
         )
 
         output_image = torch.zeros(
@@ -93,8 +111,6 @@ class GSRenderer:
         depths = torch.tensor([g.depth for g in screen_space_gaussians], device=self.device)
         sorted_indices = torch.argsort(depths, descending=False)
 
-        print(f"Rendering {len(screen_space_gaussians)} Gaussians...")
-
         self._splat_gaussians_vectorized(
             image=output_image,
             gaussians=screen_space_gaussians,
@@ -102,8 +118,6 @@ class GSRenderer:
             image_height=camera.h,
             image_width=camera.w,
         )
-
-        print("Finished rendering.")
 
         return Image(
             array=output_image.clamp(0.0, 1.0).detach().cpu().numpy(),
@@ -116,11 +130,11 @@ class GSRenderer:
     ) -> list[Gaussian]:
         output_gaussians = []
 
-        for gaussian in tqdm(gaussians, desc="Transforming to camera space"):
-            # p_camera = R^T @ (p_world - t)
-            world_to_camera = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32).transpose(0, 1)
-            camera_position = camera.pose[:3, 3].to(device=self.device, dtype=torch.float32)
+        world_to_camera = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32).transpose(0, 1)
+        camera_position = camera.pose[:3, 3].to(device=self.device, dtype=torch.float32)
 
+        for gaussian in tqdm(gaussians, desc="Transforming to camera space", leave=False):
+            # p_camera = R^T @ (p_world - t)
             mean = gaussian.mean.to(device=self.device, dtype=torch.float32)
             covariance = gaussian.covariance.to(device=self.device, dtype=torch.float32)
             color = gaussian.color.to(device=self.device, dtype=torch.float32)
@@ -150,7 +164,7 @@ class GSRenderer:
 
         output_gaussians = []
 
-        for gaussian in tqdm(gaussians, desc="Projecting to screen space"):
+        for gaussian in tqdm(gaussians, desc="Projecting to screen space", leave=False):
             camera_mean = gaussian.mean
             depth = -camera_mean[2].item()
 
@@ -207,7 +221,7 @@ class GSRenderer:
 
         transmittance = torch.ones((image_height, image_width), device=self.device, dtype=torch.float32)
 
-        for idx in tqdm(sorted_indices, desc="Splatting Gaussians"):
+        for idx in tqdm(sorted_indices, desc="Splatting Gaussians", leave=False):
             gaussian = gaussians[idx.item()]
 
             mean_2d = gaussian.mean_2d

@@ -14,6 +14,8 @@ logger = Logger("INFERENCE_LAUNCHER")
 class InferenceConfig:
     ply_file_path: str
 
+    renderer_config: GSRendererConfig
+
     inference_pipeline_config: InferencePipelineConfig
 
     output_folder: str
@@ -25,6 +27,7 @@ class InferenceConfig:
 
         mandatory_fields = {
             "ply_file_path",
+            "renderer",
             "output_folder",
             "inference_pipeline_config",
         }
@@ -44,10 +47,12 @@ class InferenceConfig:
         if not isinstance(output_folder, str):
             raise ValueError(f"InferenceConfig 'output_folder' must be a string, got '{output_folder}'.")
 
+        renderer_config = GSRendererConfig.from_dict(configuration["renderer"])
         inference_pipeline_config = InferencePipelineConfig.from_dict(configuration["inference_pipeline_config"])
 
         return InferenceConfig(
             ply_file_path=ply_file_path,
+            renderer_config=renderer_config,
             inference_pipeline_config=inference_pipeline_config,
             output_folder=output_folder,
         )
@@ -61,25 +66,23 @@ class InferenceLauncher:
         self.config = config
         self.device = Device.get()
 
-        self.renderer = GSRenderer(
-            config=GSRendererConfig(),
-            device=self.device,
-        )
-
-        logger.info(f"Loading Gaussians from {self.config.ply_file_path}...")
         gaussian_collection = load_ply_gaussians(ply_path=self.config.ply_file_path)
-        logger.info(f"Loaded {len(gaussian_collection)} Gaussians")
 
         gaussians = gaussian_collection.to_list()
 
+        renderer_config = self.config.renderer_config
+        renderer = GSRenderer(
+            config=renderer_config,
+            device=self.device,
+        )
+
         self.pipeline = InferencePipelineFactory.create(
+            renderer=renderer,
             gaussians=gaussians,
             configuration=self.config.inference_pipeline_config,
             device=self.device,
             output_folder=self.config.output_folder,
         )
-
-        logger.warning("WOUHOUUU")
 
     def run(self) -> None:
         logger.info("Starting Gaussian Splatting inference...")

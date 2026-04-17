@@ -16,6 +16,7 @@ from gaussian_splatting.structures.inference_pipelines.single_image_pipeline imp
     SingleImageInferencePipeline,
     SingleImageInferencePipelineParams,
 )
+from gaussian_splatting.structures.renderer import GSRenderer
 
 
 class InferencePipelineName(StrEnum):
@@ -73,6 +74,7 @@ class InferencePipelineConfig:
 class InferencePipelineFactory:
     @staticmethod
     def create(
+        renderer: GSRenderer,
         gaussians: list[Gaussian],
         configuration: InferencePipelineConfig,
         device: torch.device,
@@ -94,6 +96,7 @@ class InferencePipelineFactory:
         if pipeline_name == InferencePipelineName.ORBIT:
             assert isinstance(configuration.parameters, OrbitPipelineInferenceParams)
             return OrbitVideoInferencePipeline(
+                renderer=renderer,
                 gaussians=gaussians,
                 configuration=configuration.parameters,
                 output_folder=output_folder,

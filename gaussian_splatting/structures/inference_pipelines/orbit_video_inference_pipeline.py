@@ -12,7 +12,7 @@ from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
-from gaussian_splatting.structures.renderer import Camera, GSRenderer, GSRendererConfig
+from gaussian_splatting.structures.renderer import Camera, GSRenderer
 
 
 @dataclass
@@ -123,6 +123,7 @@ class OrbitPipelineInferenceParams(InferencePipelineParams):
 class OrbitVideoInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
+        renderer: GSRenderer,
         gaussians: list[Gaussian],
         configuration: OrbitPipelineInferenceParams,
         device: torch.device,
@@ -137,11 +138,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
         )
 
         self.gaussians = gaussians
-
-        self.renderer = GSRenderer(
-            config=GSRendererConfig(),
-            device=device,
-        )
+        self.renderer = renderer
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
@@ -157,7 +154,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
             os.path.join(self.output_folder, output_name),
             fourcc,
             self.configuration.fps,
-            (100, 100),
+            (self.renderer.config.width, self.renderer.config.height),
         )
 
         self.radius_list = None
@@ -205,9 +202,9 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
 
                 camera = Camera(
                     pose=pose,
-                    focal_length=200,
-                    width=100,
-                    height=100,
+                    focal_length=self.renderer.config.focal_length,
+                    width=self.renderer.config.width,
+                    height=self.renderer.config.height,
                 )
 
                 frame = self.renderer.render(
