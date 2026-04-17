@@ -67,7 +67,6 @@ class InferenceLauncher:
         self.device = Device.get()
 
         gaussian_collection = load_ply_gaussians(ply_path=self.config.ply_file_path)
-
         gaussians = gaussian_collection.to_list()
 
         renderer_config = self.config.renderer_config

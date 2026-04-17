@@ -86,6 +86,7 @@ class InferencePipelineFactory:
         if pipeline_name == InferencePipelineName.POSITION:
             assert isinstance(configuration.parameters, SingleImageInferencePipelineParams)
             return SingleImageInferencePipeline(
+                renderer=renderer,
                 gaussians=gaussians,
                 configuration=configuration.parameters,
                 device=device,

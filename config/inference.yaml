@@ -5,18 +5,24 @@ renderer:
   width: 600
   height: 400
 
+# inference_pipeline_config:
+#   name: orbit
+#   parameters:
+#     center: [0.0378, -0.0912, -0.0017]
+#     fps: 24
+#     n_frames: 2
+#     min_radius: 0.3
+#     max_radius: 0.5
+#     radius_freq: 0.5
+#     n_revolutions: 2
+#     min_phi: 0
+#     max_phi: 180
+#     phi_freq: 0.5
+
 inference_pipeline_config:
-  name: orbit
+  name: position
   parameters:
-    center: [0.0378, -0.0912, -0.0017]
-    fps: 24
-    n_frames: 2
-    min_radius: 0.3
-    max_radius: 0.5
-    radius_freq: 0.5
-    n_revolutions: 2
-    min_phi: 0
-    max_phi: 180
-    phi_freq: 0.5
+    look_at: [0.0378, -0.0912, -0.0017]
+    position: [0.0378, -0.0912, 0.3983]
 
 output_folder: output/fly_inference

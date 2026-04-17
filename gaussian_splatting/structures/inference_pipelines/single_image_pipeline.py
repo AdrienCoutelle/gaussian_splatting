@@ -6,10 +6,13 @@ import cv2
 import numpy as np
 import torch
 
+from gaussian_splatting.structures.camera import Camera
+from gaussian_splatting.structures.gaussian import Gaussian
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
+from gaussian_splatting.structures.renderer import GSRenderer
 
 
 @dataclass
@@ -61,6 +64,8 @@ class SingleImageInferencePipelineParams(InferencePipelineParams):
 class SingleImageInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
+        renderer: GSRenderer,
+        gaussians: list[Gaussian],
         configuration: SingleImageInferencePipelineParams,
         device: torch.device,
         output_folder: str,
@@ -72,6 +77,9 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
             output_folder=output_folder,
             epoch=epoch,
         )
+
+        self.renderer = renderer
+        self.gaussians = gaussians
 
         os.makedirs(self.output_folder, exist_ok=True)
 
@@ -98,9 +106,22 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
                 )
             )
 
-            rendered_image = None  # TODO
+            camera = Camera(
+                pose=pose,
+                focal_length=self.renderer.config.focal_length,
+                width=self.renderer.config.width,
+                height=self.renderer.config.height,
+            )
+
+            rendered_image = self.renderer.render(
+                camera=camera,
+                gaussians=self.gaussians,
+            )
+
+            image_array = (rendered_image.array * 255).astype(np.uint8)
+            image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
 
             cv2.imwrite(
                 filename=self.output_path,
-                img=rendered_image,
+                img=image_bgr,
             )
