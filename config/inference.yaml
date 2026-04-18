@@ -1,9 +1,11 @@
 ply_file_path: datasets/fly.ply
 
 renderer:
-  focal_length: 200
-  width: 600
-  height: 400
+  name: naive
+  parameters:
+    focal_length: 200
+    width: 600
+    height: 400
 
 inference_pipeline_config:
   name: orbit

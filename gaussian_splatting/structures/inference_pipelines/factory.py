@@ -16,7 +16,7 @@ from gaussian_splatting.structures.inference_pipelines.single_image_pipeline imp
     SingleImageInferencePipeline,
     SingleImageInferencePipelineParams,
 )
-from gaussian_splatting.structures.renderer import GSRenderer
+from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
 
 
 class InferencePipelineName(StrEnum):
@@ -74,7 +74,7 @@ class InferencePipelineConfig:
 class InferencePipelineFactory:
     @staticmethod
     def create(
-        renderer: GSRenderer,
+        renderer: BaseRenderer,
         gaussians: list[Gaussian],
         configuration: InferencePipelineConfig,
         device: torch.device,

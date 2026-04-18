@@ -12,7 +12,7 @@ from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
-from gaussian_splatting.structures.renderer import GSRenderer
+from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
 
 
 @dataclass
@@ -64,7 +64,7 @@ class SingleImageInferencePipelineParams(InferencePipelineParams):
 class SingleImageInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
-        renderer: GSRenderer,
+        renderer: BaseRenderer,
         gaussians: list[Gaussian],
         configuration: SingleImageInferencePipelineParams,
         device: torch.device,

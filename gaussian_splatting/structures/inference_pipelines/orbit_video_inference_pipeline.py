@@ -7,12 +7,13 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
-from gaussian_splatting.structures.renderer import Camera, GSRenderer
+from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
 
 
 @dataclass
@@ -123,7 +124,7 @@ class OrbitPipelineInferenceParams(InferencePipelineParams):
 class OrbitVideoInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
-        renderer: GSRenderer,
+        renderer: BaseRenderer,
         gaussians: list[Gaussian],
         configuration: OrbitPipelineInferenceParams,
         device: torch.device,

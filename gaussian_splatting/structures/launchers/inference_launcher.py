@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from gaussian_splatting.structures.device import Device
 from gaussian_splatting.structures.inference_pipelines.factory import InferencePipelineConfig, InferencePipelineFactory
-from gaussian_splatting.structures.renderer import GSRenderer, GSRendererConfig
+from gaussian_splatting.structures.renderers.factory import RendererConfig, RendererFactory
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply_loader import load_ply_gaussians
 from gaussian_splatting.utils.profiler import Profiler
@@ -14,7 +14,7 @@ logger = Logger("INFERENCE_LAUNCHER")
 class InferenceConfig:
     ply_file_path: str
 
-    renderer_config: GSRendererConfig
+    renderer_config: RendererConfig
 
     inference_pipeline_config: InferencePipelineConfig
 
@@ -47,7 +47,7 @@ class InferenceConfig:
         if not isinstance(output_folder, str):
             raise ValueError(f"InferenceConfig 'output_folder' must be a string, got '{output_folder}'.")
 
-        renderer_config = GSRendererConfig.from_dict(configuration["renderer"])
+        renderer_config = RendererConfig.from_dict(configuration["renderer"])
         inference_pipeline_config = InferencePipelineConfig.from_dict(configuration["inference_pipeline_config"])
 
         return InferenceConfig(
@@ -69,9 +69,8 @@ class InferenceLauncher:
         gaussian_collection = load_ply_gaussians(ply_path=self.config.ply_file_path)
         gaussians = gaussian_collection.to_list()
 
-        renderer_config = self.config.renderer_config
-        renderer = GSRenderer(
-            config=renderer_config,
+        renderer = RendererFactory.create_renderer(
+            configuration=self.config.renderer_config,
             device=self.device,
         )
 
