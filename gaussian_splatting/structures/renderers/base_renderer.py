@@ -23,12 +23,12 @@ class Image:
 
 
 @dataclass
-class ScreenSpaceGaussian:
-    mean_2d: torch.Tensor
-    covariance_2d: torch.Tensor
-    depth: float
-    color: torch.Tensor
-    opacity: torch.Tensor
+class ScreenSpaceGaussians:
+    means_2d: torch.Tensor
+    covariances_2d: torch.Tensor
+    depths: torch.Tensor
+    colors: torch.Tensor
+    opacities: torch.Tensor
 
 
 @dataclass
@@ -69,8 +69,12 @@ class BaseRenderer(ABC):
             dtype=torch.float32,
         )
 
-        depths = torch.tensor([g.depth for g in screen_space_gaussians], device=self.device)
-        sorted_indices = torch.argsort(depths, descending=False)
+        if screen_space_gaussians is None:
+            return Image(
+                array=output_image.clamp(0.0, 1.0).detach().cpu().numpy(),
+            )
+
+        sorted_indices = torch.argsort(screen_space_gaussians.depths, descending=False)
 
         self._splat_gaussians_vectorized(
             image=output_image,
@@ -116,7 +120,7 @@ class BaseRenderer(ABC):
         self,
         camera: Camera,
         gaussians: GaussianCollection,
-    ) -> list[ScreenSpaceGaussian]:
+    ) -> ScreenSpaceGaussians | None:
         principal_point_x = camera.w / 2.0
         principal_point_y = camera.h / 2.0
 
@@ -129,7 +133,7 @@ class BaseRenderer(ABC):
         valid_indices = torch.nonzero(valid_mask, as_tuple=True)[0]
 
         if len(valid_indices) == 0:
-            return []
+            return None
 
         # Filter all tensors
         valid_means = camera_means[valid_indices]
@@ -163,25 +167,19 @@ class BaseRenderer(ABC):
         # regularization = torch.eye(2, device=self.device, dtype=torch.float32) * self.config.covariance_regularization
         # covariances_2d += regularization.unsqueeze(0)
 
-        # Create list of ScreenSpaceGaussian objects
-        output_gaussians = [
-            ScreenSpaceGaussian(
-                mean_2d=means_2d[i],
-                covariance_2d=covariances_2d[i],
-                depth=valid_depths[i].item(),
-                color=valid_colors[i],
-                opacity=valid_opacities[i],
-            )
-            for i in range(N)
-        ]
-
-        return output_gaussians
+        return ScreenSpaceGaussians(
+            means_2d=means_2d,
+            covariances_2d=covariances_2d,
+            depths=valid_depths,
+            colors=valid_colors,
+            opacities=valid_opacities,
+        )
 
     @abstractmethod
     def _splat_gaussians_vectorized(
         self,
         image: torch.Tensor,
-        gaussians: list[ScreenSpaceGaussian],
+        gaussians: ScreenSpaceGaussians,
         sorted_indices: torch.Tensor,
         image_height: int,
         image_width: int,

@@ -3,7 +3,8 @@ from dataclasses import dataclass
 import torch
 from tqdm import tqdm
 
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, ScreenSpaceGaussian
+from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, ScreenSpaceGaussians
+from gaussian_splatting.utils.profiler import profile
 
 
 @dataclass
@@ -52,11 +53,12 @@ class NaiveRendererParams:
         )
 
 
+@profile
 class NaiveRenderer(BaseRenderer):
     def _splat_gaussians_vectorized(
         self,
         image: torch.Tensor,
-        gaussians: list[ScreenSpaceGaussian],
+        gaussians: ScreenSpaceGaussians,
         sorted_indices: torch.Tensor,
         image_height: int,
         image_width: int,
@@ -71,10 +73,12 @@ class NaiveRenderer(BaseRenderer):
         transmittance = torch.ones((image_height, image_width), device=self.device, dtype=torch.float32)
 
         for idx in tqdm(sorted_indices, desc="Splatting Gaussians", leave=False):
-            gaussian = gaussians[idx.item()]
+            idx_item = idx.item()
 
-            mean_2d = gaussian.mean_2d
-            cov_2d = gaussian.covariance_2d
+            mean_2d = gaussians.means_2d[idx_item]
+            cov_2d = gaussians.covariances_2d[idx_item]
+            color = gaussians.colors[idx_item]
+            opacity = gaussians.opacities[idx_item]
 
             max_variance = torch.max(cov_2d[0, 0], cov_2d[1, 1]) + torch.abs(cov_2d[0, 1])
             max_extent = self.config.gaussian_extent * torch.sqrt(max_variance)
@@ -102,11 +106,11 @@ class NaiveRenderer(BaseRenderer):
 
             weight = torch.exp(-0.5 * mahalanobis)
 
-            alpha = torch.clamp(weight * gaussian.opacity, 0.0, 1.0)
+            alpha = torch.clamp(weight * opacity, 0.0, 1.0)
 
             current_transmittance = transmittance[min_y:max_y, min_x:max_x]
             contribution = alpha * current_transmittance
 
-            image[min_y:max_y, min_x:max_x] += contribution.unsqueeze(-1) * gaussian.color
+            image[min_y:max_y, min_x:max_x] += contribution.unsqueeze(-1) * color
 
             transmittance[min_y:max_y, min_x:max_x] *= 1.0 - alpha
