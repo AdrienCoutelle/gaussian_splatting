@@ -6,6 +6,7 @@ import torch
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
+from gaussian_splatting.utils.profiler import profile
 
 
 @dataclass
@@ -35,6 +36,7 @@ class RendererParams:
     pass
 
 
+@profile
 class BaseRenderer(ABC):
     def __init__(
         self,
