@@ -3,9 +3,12 @@ from enum import StrEnum
 
 import torch
 
-from gaussian_splatting.structures.renderers.apple_silicon_renderer import NaiveRenderer
+from gaussian_splatting.structures.renderers.apple_silicon_renderer import (
+    AppleSiliconRenderer,
+    AppleSiliconRendererParams,
+)
 from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, RendererParams
-from gaussian_splatting.structures.renderers.naive_renderer import NaiveRendererParams
+from gaussian_splatting.structures.renderers.naive_renderer import NaiveRenderer, NaiveRendererParams
 
 
 class RendererName(StrEnum):
@@ -57,7 +60,10 @@ class RendererConfig:
             )
 
         if name == RendererName.APPLE_SILICON:
-            raise NotImplementedError("Apple Silicon renderer is not implemented yet.")
+            return cls(
+                name=RendererName.APPLE_SILICON,
+                parameters=AppleSiliconRendererParams.from_dict(parameters),
+            )
 
         if name == RendererName.CUDA:
             raise NotImplementedError("CUDA renderer is not implemented yet.")
@@ -80,7 +86,11 @@ class RendererFactory:
             )
 
         if renderer_name == RendererName.APPLE_SILICON:
-            raise NotImplementedError("Apple Silicon renderer is not implemented yet.")
+            assert isinstance(configuration.parameters, AppleSiliconRendererParams)
+            return AppleSiliconRenderer(
+                configuration=configuration.parameters,
+                device=device,
+            )
 
         if renderer_name == RendererName.CUDA:
             raise NotImplementedError("CUDA renderer is not implemented yet.")

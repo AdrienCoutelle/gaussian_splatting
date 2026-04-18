@@ -1,7 +1,7 @@
 ply_file_path: datasets/fly.ply
 
 renderer:
-  name: naive
+  name: apple_silicon
   parameters:
     focal_length: 200
     width: 600
