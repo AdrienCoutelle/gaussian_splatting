@@ -15,6 +15,8 @@ class NaiveRendererParams:
     near_plane: float = 1e-4
     covariance_regularization: float = 0.3
     gaussian_extent: float = 3.0
+    tile_size: int = 16
+    max_gaussians_per_batch: int = 1024
 
     @classmethod
     def from_dict(
@@ -42,6 +44,8 @@ class NaiveRendererParams:
         near_plane = config_dict.get("near_plane", 1e-4)
         covariance_regularization = config_dict.get("covariance_regularization", 0.3)
         gaussian_extent = config_dict.get("gaussian_extent", 3.0)
+        tile_size = config_dict.get("tile_size", 32)
+        max_gaussians_per_batch = config_dict.get("max_gaussians_per_batch", 512)
 
         return NaiveRendererParams(
             width=width,
@@ -50,6 +54,8 @@ class NaiveRendererParams:
             near_plane=near_plane,
             covariance_regularization=covariance_regularization,
             gaussian_extent=gaussian_extent,
+            tile_size=tile_size,
+            max_gaussians_per_batch=max_gaussians_per_batch,
         )
 
 
@@ -63,54 +69,128 @@ class NaiveRenderer(BaseRenderer):
         image_height: int,
         image_width: int,
     ) -> None:
-        y_coords, x_coords = torch.meshgrid(
-            torch.arange(image_height, device=self.device, dtype=torch.float32),
-            torch.arange(image_width, device=self.device, dtype=torch.float32),
-            indexing="ij",
+        if len(sorted_indices) == 0:
+            return
+
+        means_2d = gaussians.means_2d[sorted_indices]
+        covariances_2d = gaussians.covariances_2d[sorted_indices]
+        colors = gaussians.colors[sorted_indices]
+        opacities = gaussians.opacities[sorted_indices].reshape(-1)
+
+        a = covariances_2d[:, 0, 0]
+        b = covariances_2d[:, 0, 1]
+        c = covariances_2d[:, 1, 1]
+        determinant = torch.clamp(a * c - b * b, min=1e-10)
+        inverse_determinant = 1.0 / determinant
+        conics = torch.stack(
+            [
+                c * inverse_determinant,
+                -b * inverse_determinant,
+                a * inverse_determinant,
+            ],
+            dim=1,
         )
-        pixel_positions = torch.stack([x_coords, y_coords], dim=-1) + 0.5
 
-        transmittance = torch.ones((image_height, image_width), device=self.device, dtype=torch.float32)
+        max_variance = torch.maximum(a, c) + torch.abs(b)
+        max_extent = self.config.gaussian_extent * torch.sqrt(torch.clamp(max_variance, min=1e-10))
 
-        for idx in tqdm(sorted_indices, desc="Splatting Gaussians", leave=False):
-            idx_item = idx.item()
+        min_x = torch.floor(means_2d[:, 0] - max_extent).to(dtype=torch.int64)
+        max_x = torch.ceil(means_2d[:, 0] + max_extent).to(dtype=torch.int64)
+        min_y = torch.floor(means_2d[:, 1] - max_extent).to(dtype=torch.int64)
+        max_y = torch.ceil(means_2d[:, 1] + max_extent).to(dtype=torch.int64)
 
-            mean_2d = gaussians.means_2d[idx_item]
-            cov_2d = gaussians.covariances_2d[idx_item]
-            color = gaussians.colors[idx_item]
-            opacity = gaussians.opacities[idx_item]
+        min_x = torch.clamp(min_x, min=0, max=image_width)
+        max_x = torch.clamp(max_x, min=0, max=image_width)
+        min_y = torch.clamp(min_y, min=0, max=image_height)
+        max_y = torch.clamp(max_y, min=0, max=image_height)
 
-            max_variance = torch.max(cov_2d[0, 0], cov_2d[1, 1]) + torch.abs(cov_2d[0, 1])
-            max_extent = self.config.gaussian_extent * torch.sqrt(max_variance)
+        valid_mask = (min_x < max_x) & (min_y < max_y)
+        if not torch.any(valid_mask):
+            return
 
-            min_x = int(torch.floor(mean_2d[0] - max_extent).item())
-            max_x = int(torch.ceil(mean_2d[0] + max_extent).item())
-            min_y = int(torch.floor(mean_2d[1] - max_extent).item())
-            max_y = int(torch.ceil(mean_2d[1] + max_extent).item())
+        means_2d = means_2d[valid_mask]
+        conics = conics[valid_mask]
+        colors = colors[valid_mask]
+        opacities = opacities[valid_mask]
+        max_extent = max_extent[valid_mask]
+        min_x = min_x[valid_mask]
+        max_x = max_x[valid_mask]
+        min_y = min_y[valid_mask]
+        max_y = max_y[valid_mask]
 
-            min_x = max(0, min_x)
-            max_x = min(image_width, max_x)
-            min_y = max(0, min_y)
-            max_y = min(image_height, max_y)
+        tile_size = self.config.tile_size
+        max_gaussians_per_batch = self.config.max_gaussians_per_batch
 
-            if min_x >= max_x or min_y >= max_y:
-                continue
+        for tile_min_y in tqdm(range(0, image_height, tile_size), desc="Splatting tiles", leave=False):
+            tile_max_y = min(tile_min_y + tile_size, image_height)
 
-            pixels = pixel_positions[min_y:max_y, min_x:max_x]
+            y_indices = torch.arange(tile_min_y, tile_max_y, device=self.device, dtype=torch.int64)
+            y_centers = y_indices.to(dtype=torch.float32) + 0.5
 
-            delta = pixels - mean_2d
+            for tile_min_x in range(0, image_width, tile_size):
+                tile_max_x = min(tile_min_x + tile_size, image_width)
 
-            cov_inv = torch.linalg.inv(cov_2d)
+                overlaps_tile = (
+                    (min_x < tile_max_x) & (max_x > tile_min_x) & (min_y < tile_max_y) & (max_y > tile_min_y)
+                )
+                if not torch.any(overlaps_tile):
+                    continue
 
-            mahalanobis = torch.sum(delta @ cov_inv * delta, dim=-1)
+                tile_means = means_2d[overlaps_tile]
+                tile_conics = conics[overlaps_tile]
+                tile_colors = colors[overlaps_tile]
+                tile_opacities = opacities[overlaps_tile]
+                tile_extents = max_extent[overlaps_tile]
 
-            weight = torch.exp(-0.5 * mahalanobis)
+                x_indices = torch.arange(tile_min_x, tile_max_x, device=self.device, dtype=torch.int64)
+                x_centers = x_indices.to(dtype=torch.float32) + 0.5
 
-            alpha = torch.clamp(weight * opacity, 0.0, 1.0)
+                tile_y_coords, tile_x_coords = torch.meshgrid(y_centers, x_centers, indexing="ij")
+                tile_pixels = torch.stack([tile_x_coords, tile_y_coords], dim=-1).reshape(-1, 2)
 
-            current_transmittance = transmittance[min_y:max_y, min_x:max_x]
-            contribution = alpha * current_transmittance
+                tile_image = torch.zeros((tile_pixels.shape[0], 3), device=self.device, dtype=torch.float32)
+                tile_transmittance = torch.ones(tile_pixels.shape[0], device=self.device, dtype=torch.float32)
 
-            image[min_y:max_y, min_x:max_x] += contribution.unsqueeze(-1) * color
+                for start_idx in range(0, tile_means.shape[0], max_gaussians_per_batch):
+                    end_idx = start_idx + max_gaussians_per_batch
 
-            transmittance[min_y:max_y, min_x:max_x] *= 1.0 - alpha
+                    batch_means = tile_means[start_idx:end_idx]
+                    batch_conics = tile_conics[start_idx:end_idx]
+                    batch_colors = tile_colors[start_idx:end_idx]
+                    batch_opacities = tile_opacities[start_idx:end_idx]
+                    batch_extents = tile_extents[start_idx:end_idx]
+
+                    delta = tile_pixels.unsqueeze(0) - batch_means.unsqueeze(1)
+                    delta_x = delta[..., 0]
+                    delta_y = delta[..., 1]
+
+                    mahalanobis = (
+                        batch_conics[:, 0].unsqueeze(1) * delta_x.square()
+                        + 2.0 * batch_conics[:, 1].unsqueeze(1) * delta_x * delta_y
+                        + batch_conics[:, 2].unsqueeze(1) * delta_y.square()
+                    )
+
+                    within_extent = (torch.abs(delta_x) <= batch_extents.unsqueeze(1)) & (
+                        torch.abs(delta_y) <= batch_extents.unsqueeze(1)
+                    )
+
+                    weight = torch.exp(-0.5 * mahalanobis)
+                    alpha = torch.clamp(weight * batch_opacities.unsqueeze(1), 0.0, 1.0)
+                    alpha = torch.where(within_extent, alpha, torch.zeros_like(alpha))
+
+                    one_minus_alpha = 1.0 - alpha
+                    transmittance_before = torch.cat(
+                        [
+                            torch.ones((1, alpha.shape[1]), device=self.device, dtype=torch.float32),
+                            torch.cumprod(one_minus_alpha[:-1], dim=0),
+                        ],
+                        dim=0,
+                    )
+                    contribution = alpha * transmittance_before * tile_transmittance.unsqueeze(0)
+
+                    tile_image += contribution.transpose(0, 1) @ batch_colors
+                    tile_transmittance *= torch.prod(one_minus_alpha, dim=0)
+
+                tile_height = tile_max_y - tile_min_y
+                tile_width = tile_max_x - tile_min_x
+                image[tile_min_y:tile_max_y, tile_min_x:tile_max_x] += tile_image.reshape(tile_height, tile_width, 3)

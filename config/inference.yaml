@@ -1,7 +1,7 @@
 ply_file_path: datasets/fly.ply
 
 renderer:
-  name: apple_silicon
+  name: naive
   parameters:
     focal_length: 200
     width: 600
@@ -12,7 +12,7 @@ inference_pipeline_config:
   parameters:
     center: [0.0378, -0.0912, -0.0017]
     fps: 24
-    n_frames: 240
+    n_frames: 10
     min_radius: 0.3
     max_radius: 0.5
     radius_freq: 0.5

@@ -1,5 +1,3 @@
-"""MLX-based Apple Silicon renderer for Gaussian Splatting using Metal kernels."""
-
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -652,3 +650,405 @@ def _rasterize_gaussians_metal(
             print(f"  G per tile: avg={avg_g:.1f}, max={max_g}")
 
     return mx.clip(image, 0.0, 1.0)
+
+
+# """MLX-based Apple Silicon renderer for Gaussian Splatting using Python MLX ops."""
+
+# from dataclasses import dataclass
+
+# import mlx.core as mx
+# import torch
+
+# from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, ScreenSpaceGaussians
+# from gaussian_splatting.utils.profiler import profile
+
+
+# @dataclass
+# class AppleSiliconRendererParams:
+#     width: int
+#     height: int
+#     focal_length: float
+#     near_plane: float = 1e-4
+#     covariance_regularization: float = 0.3
+#     tile_size: tuple[int, int] = (16, 16)
+#     max_gaussians_per_tile: int = 4000
+#     sigma_cut: float = 12.0
+#     eps: float = 1e-3
+#     verbose: bool = False
+
+#     @classmethod
+#     def from_dict(
+#         cls,
+#         config_dict: dict,
+#     ) -> "AppleSiliconRendererParams":
+#         if not isinstance(config_dict, dict):
+#             raise ValueError(f"AppleSiliconRendererParams must be a dictionary, got '{type(config_dict).__name__}'.")
+
+#         mandatory_fields = {
+#             "width",
+#             "height",
+#             "focal_length",
+#         }
+#         if not set(config_dict.keys()).issuperset(mandatory_fields):
+#             missing_fields = mandatory_fields - set(config_dict.keys())
+#             raise ValueError(
+#                 f"AppleSiliconRendererParams is missing the following mandatory fields: {', '.join(missing_fields)}, "
+#                 f"got {', '.join(config_dict.keys())}."
+#             )
+
+#         return AppleSiliconRendererParams(
+#             width=config_dict["width"],
+#             height=config_dict["height"],
+#             focal_length=config_dict["focal_length"],
+#             near_plane=config_dict.get("near_plane", 1e-4),
+#             covariance_regularization=config_dict.get("covariance_regularization", 0.3),
+#             tile_size=tuple(config_dict.get("tile_size", (16, 16))),
+#             max_gaussians_per_tile=config_dict.get("max_gaussians_per_tile", 4000),
+#             sigma_cut=config_dict.get("sigma_cut", 12.0),
+#             eps=config_dict.get("eps", 1e-3),
+#             verbose=config_dict.get("verbose", False),
+#         )
+
+
+# class AppleSiliconRenderer(BaseRenderer):
+#     @dataclass
+#     class _Camera:
+#         width: int
+#         height: int
+
+#     @dataclass
+#     class _ProjectedGaussians:
+#         xys: mx.array
+#         conic: mx.array
+#         opacity: mx.array
+#         color: mx.array
+#         depths: mx.array
+
+#     @dataclass
+#     class _TileBins:
+#         starts: list[int]
+#         ends: list[int]
+#         gauss_ids_sorted: list[int]
+
+#     @profile
+#     def _splat_gaussians_vectorized(
+#         self,
+#         image: torch.Tensor,
+#         gaussians: ScreenSpaceGaussians,
+#         sorted_indices: torch.Tensor,
+#         image_height: int,
+#         image_width: int,
+#     ) -> None:
+#         if len(gaussians.means_2d) == 0:
+#             return
+
+#         projected = self._create_projected_gaussians(
+#             gaussians=gaussians,
+#             sorted_indices=sorted_indices,
+#         )
+
+#         camera = self._Camera(
+#             width=image_width,
+#             height=image_height,
+#         )
+#         tile_bins = self._create_tile_bins(
+#             projected=projected,
+#             camera=camera,
+#         )
+
+#         rendered_image = self._rasterize_gaussians_mlx(
+#             projected=projected,
+#             tile_bins=tile_bins,
+#             camera=camera,
+#             tile_size=self.config.tile_size,
+#             max_gaussians_per_tile=self.config.max_gaussians_per_tile,
+#             verbose=self.config.verbose,
+#             sigma_cut=self.config.sigma_cut,
+#             eps=self.config.eps,
+#         )
+#         mx.eval(rendered_image)
+
+#         image.copy_(
+#             torch.tensor(
+#                 rendered_image.tolist(),
+#                 device=self.device,
+#                 dtype=torch.float32,
+#             )
+#         )
+
+#     @profile
+#     def _create_projected_gaussians(
+#         self,
+#         gaussians: ScreenSpaceGaussians,
+#         sorted_indices: torch.Tensor,
+#     ) -> "_ProjectedGaussians":
+#         means_2d = gaussians.means_2d[sorted_indices]
+#         covariances_2d = gaussians.covariances_2d[sorted_indices]
+#         colors = gaussians.colors[sorted_indices]
+#         opacities = gaussians.opacities[sorted_indices]
+#         depths = gaussians.depths[sorted_indices]
+
+#         a = covariances_2d[:, 0, 0] + self.config.covariance_regularization
+#         b = covariances_2d[:, 0, 1]
+#         c = covariances_2d[:, 1, 1] + self.config.covariance_regularization
+#         det = torch.clamp(a * c - b * b, min=1e-10)
+#         inv_det = 1.0 / det
+#         conic = torch.stack(
+#             [
+#                 c * inv_det,
+#                 -b * inv_det,
+#                 a * inv_det,
+#             ],
+#             dim=1,
+#         )
+
+#         if opacities.dim() > 1:
+#             opacities = opacities.squeeze(-1)
+
+#         return self._ProjectedGaussians(
+#             xys=mx.array(means_2d.detach().cpu().tolist(), dtype=mx.float32),
+#             conic=mx.array(conic.detach().cpu().tolist(), dtype=mx.float32),
+#             opacity=mx.array(opacities.detach().cpu().tolist(), dtype=mx.float32),
+#             color=mx.array(colors.detach().cpu().tolist(), dtype=mx.float32),
+#             depths=mx.array(depths.detach().cpu().tolist(), dtype=mx.float32),
+#         )
+
+#     @profile
+#     def _create_tile_bins(
+#         self,
+#         projected: "_ProjectedGaussians",
+#         camera: "_Camera",
+#     ) -> "_TileBins":
+#         tx, ty = self.config.tile_size
+#         tile_width = (camera.width + tx - 1) // tx
+#         tile_height = (camera.height + ty - 1) // ty
+#         num_tiles = tile_width * tile_height
+
+#         starts = [-1] * num_tiles
+#         ends = [-1] * num_tiles
+#         gauss_ids_sorted: list[int] = []
+
+#         if int(projected.xys.shape[0]) == 0:
+#             return self._TileBins(
+#                 starts=starts,
+#                 ends=ends,
+#                 gauss_ids_sorted=gauss_ids_sorted,
+#             )
+
+#         tile_entries: list[tuple[int, float, int]] = []
+#         xys = projected.xys.tolist()
+#         depths = projected.depths.tolist()
+
+#         for gaussian_id, ((x, y), depth) in enumerate(zip(xys, depths, strict=False)):
+#             tile_x = int(x // tx)
+#             tile_y = int(y // ty)
+#             if 0 <= tile_x < tile_width and 0 <= tile_y < tile_height:
+#                 tile_id = tile_y * tile_width + tile_x
+#                 tile_entries.append((tile_id, float(depth), gaussian_id))
+
+#         if not tile_entries:
+#             return self._TileBins(
+#                 starts=starts,
+#                 ends=ends,
+#                 gauss_ids_sorted=gauss_ids_sorted,
+#             )
+
+#         tile_entries.sort(key=lambda entry: (entry[0], entry[1]))
+#         gauss_ids_sorted = [entry[2] for entry in tile_entries]
+
+#         current_tile = tile_entries[0][0]
+#         starts[current_tile] = 0
+
+#         for index, (tile_id, _, _) in enumerate(tile_entries):
+#             if tile_id != current_tile:
+#                 ends[current_tile] = index
+#                 current_tile = tile_id
+#                 starts[current_tile] = index
+
+#         ends[current_tile] = len(tile_entries)
+
+#         return self._TileBins(
+#             starts=starts,
+#             ends=ends,
+#             gauss_ids_sorted=gauss_ids_sorted,
+#         )
+
+#     def _select_tile_gaussian_ids(
+#         self,
+#         projected: "_ProjectedGaussians",
+#         tile_bins: "_TileBins",
+#         tile_id: int,
+#         tile_width: int,
+#     ) -> mx.array | None:
+#         start = tile_bins.starts[tile_id]
+#         end = tile_bins.ends[tile_id]
+
+#         if start < 0 or end <= start:
+#             return None
+
+#         tile_ids = tile_bins.gauss_ids_sorted[start:end]
+#         if len(tile_ids) <= self.config.max_gaussians_per_tile:
+#             return mx.array(tile_ids, dtype=mx.int32)
+
+#         tx, ty = self.config.tile_size
+#         tile_x_idx = tile_id % tile_width
+#         tile_y_idx = tile_id // tile_width
+#         center_x = float(tile_x_idx * tx + tx * 0.5)
+#         center_y = float(tile_y_idx * ty + ty * 0.5)
+
+#         tile_ids_mx = mx.array(tile_ids, dtype=mx.int32)
+#         tile_xy = mx.take(projected.xys, tile_ids_mx, axis=0)
+#         tile_conic = mx.take(projected.conic, tile_ids_mx, axis=0)
+#         tile_opacity = mx.take(projected.opacity, tile_ids_mx, axis=0)
+#         tile_depths = mx.take(projected.depths, tile_ids_mx, axis=0)
+
+#         if tile_opacity.ndim > 1:
+#             tile_opacity = tile_opacity.squeeze(-1)
+
+#         dx = mx.array(center_x, dtype=mx.float32) - tile_xy[:, 0]
+#         dy = mx.array(center_y, dtype=mx.float32) - tile_xy[:, 1]
+#         sigma = 0.5 * (tile_conic[:, 0] * dx * dx + 2.0 * tile_conic[:, 1] * dx * dy + tile_conic[:, 2] * dy * dy)
+#         scores = mx.maximum(tile_opacity, 0.0) * mx.exp(-mx.minimum(sigma, self.config.sigma_cut))
+#         top_k_indices = mx.argsort(-scores)[: self.config.max_gaussians_per_tile]
+#         top_k_depths = tile_depths[top_k_indices]
+#         depth_order = mx.argsort(top_k_depths)
+
+#         return mx.take(tile_ids_mx, top_k_indices[depth_order], axis=0)
+
+#     def _rasterize_tile(
+#         self,
+#         projected: "_ProjectedGaussians",
+#         gaussian_ids: mx.array | None,
+#         x0: int,
+#         y0: int,
+#         x1: int,
+#         y1: int,
+#         background: tuple[float, float, float],
+#         sigma_cut: float,
+#         eps: float,
+#     ) -> mx.array:
+#         tile_height = y1 - y0
+#         tile_width = x1 - x0
+#         background_color = mx.array(background, dtype=mx.float32)
+
+#         if gaussian_ids is None or int(gaussian_ids.shape[0]) == 0:
+#             return mx.full((tile_height, tile_width, 3), background_color, dtype=mx.float32)
+
+#         tile_xy = mx.take(projected.xys, gaussian_ids, axis=0)
+#         tile_conic = mx.take(projected.conic, gaussian_ids, axis=0)
+#         tile_opacity = mx.take(projected.opacity, gaussian_ids, axis=0)
+#         tile_color = mx.take(projected.color, gaussian_ids, axis=0)
+
+#         if tile_opacity.ndim > 1:
+#             tile_opacity = tile_opacity.squeeze(-1)
+
+#         pixel_x = (mx.arange(x0, x1, dtype=mx.float32) + 0.5).reshape(1, tile_width, 1)
+#         pixel_y = (mx.arange(y0, y1, dtype=mx.float32) + 0.5).reshape(tile_height, 1, 1)
+
+#         dx = pixel_x - tile_xy[:, 0].reshape(1, 1, -1)
+#         dy = pixel_y - tile_xy[:, 1].reshape(1, 1, -1)
+
+#         sigma = 0.5 * (
+#             tile_conic[:, 0].reshape(1, 1, -1) * dx * dx
+#             + 2.0 * tile_conic[:, 1].reshape(1, 1, -1) * dx * dy
+#             + tile_conic[:, 2].reshape(1, 1, -1) * dy * dy
+#         )
+#         alpha = mx.where(
+#             sigma <= sigma_cut,
+#             mx.minimum(
+#                 mx.maximum(tile_opacity.reshape(1, 1, -1), 0.0) * mx.exp(-sigma),
+#                 0.999,
+#             ),
+#             0.0,
+#         )
+
+#         one_minus_alpha = 1.0 - alpha
+#         transmittance_prefix = mx.concatenate(
+#             [
+#                 mx.ones((tile_height, tile_width, 1), dtype=mx.float32),
+#                 mx.cumprod(one_minus_alpha[..., :-1], axis=-1),
+#             ],
+#             axis=-1,
+#         )
+
+#         if eps > 0.0:
+#             transmittance_prefix = mx.where(transmittance_prefix >= eps, transmittance_prefix, 0.0)
+
+#         color = (transmittance_prefix[..., None] * alpha[..., None] * tile_color.reshape(1, 1, -1, 3)).sum(axis=2)
+#         final_transmittance = mx.prod(one_minus_alpha, axis=-1, keepdims=True)
+
+#         return color + final_transmittance * background_color.reshape(1, 1, 3)
+
+#     @profile
+#     def _rasterize_gaussians_mlx(
+#         self,
+#         projected: "_ProjectedGaussians",
+#         tile_bins: "_TileBins",
+#         camera: "_Camera",
+#         background: tuple[float, float, float] = (0.0, 0.0, 0.0),
+#         tile_size: tuple[int, int] = (16, 16),
+#         max_gaussians_per_tile: int = 4000,
+#         verbose: bool = False,
+#         sigma_cut: float = 12.0,
+#         eps: float = 1e-3,
+#     ) -> mx.array:
+#         width, height = camera.width, camera.height
+#         tx, ty = tile_size
+#         tiles_x = (width + tx - 1) // tx
+#         tiles_y = (height + ty - 1) // ty
+
+#         if verbose:
+#             num_tiles = tiles_x * tiles_y
+#             print("Python MLX rasterization:")
+#             print(f"  Image: {width}x{height}")
+#             print(f"  Tiles: {tiles_x}x{tiles_y} = {num_tiles}")
+#             print(f"  Tile size: {tx}x{ty}")
+
+#         if int(projected.xys.shape[0]) == 0:
+#             background_color = mx.array(background, dtype=mx.float32)
+#             return mx.full((height, width, 3), background_color, dtype=mx.float32)
+
+#         image = mx.full(
+#             (height, width, 3),
+#             mx.array(background, dtype=mx.float32),
+#             dtype=mx.float32,
+#         )
+#         gaussian_counts: list[int] = []
+
+#         for tile_id in range(tiles_x * tiles_y):
+#             gaussian_ids = self._select_tile_gaussian_ids(
+#                 projected=projected,
+#                 tile_bins=tile_bins,
+#                 tile_id=tile_id,
+#                 tile_width=tiles_x,
+#             )
+#             if gaussian_ids is None:
+#                 continue
+
+#             gaussian_counts.append(int(gaussian_ids.shape[0]))
+
+#             tile_y_idx = tile_id // tiles_x
+#             tile_x_idx = tile_id % tiles_x
+#             y0 = tile_y_idx * ty
+#             x0 = tile_x_idx * tx
+#             y1 = min(y0 + ty, height)
+#             x1 = min(x0 + tx, width)
+
+#             image[y0:y1, x0:x1] = self._rasterize_tile(
+#                 projected=projected,
+#                 gaussian_ids=gaussian_ids,
+#                 x0=x0,
+#                 y0=y0,
+#                 x1=x1,
+#                 y1=y1,
+#                 background=background,
+#                 sigma_cut=sigma_cut,
+#                 eps=eps,
+#             )
+
+#         if verbose and gaussian_counts:
+#             avg_gaussians = sum(gaussian_counts) / len(gaussian_counts)
+#             print(f"  Total gaussians in tiles: {sum(gaussian_counts)}")
+#             print(f"  G per tile: avg={avg_gaussians:.1f}, max={max(gaussian_counts)}")
+
+#         return mx.clip(image, 0.0, 1.0)
