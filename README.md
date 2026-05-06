@@ -21,3 +21,5 @@ pip install -e .[tests]
 - Make the whole code faster. Delete de Gaussian class, only use the Gaussians class (instead of GaussianCollection)
 - Clean the torch type issue so I don't have to convert everything to float32 in the renderer code.
 - Set the gaussians device in the loading script, not in the renderer code.
+- Write the COLMAP wrapper
+- Write the training loop
