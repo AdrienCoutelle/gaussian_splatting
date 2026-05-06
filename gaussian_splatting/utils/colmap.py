@@ -82,6 +82,9 @@ class ColmapRunner:
 
         self.database_path = self.workspace_path / "database.db"
 
+        self.text_model_path = self.workspace_path / "text"
+        self.text_model_path.mkdir(parents=True, exist_ok=True)
+
         self.images_path = Path(self.configuration.images_path)
         if (
             not self.images_path.exists()
@@ -101,33 +104,17 @@ class ColmapRunner:
 
         self._run_mapping()
 
-        sparse_model_path = self.sparse_path / "0"
-        model_input_path = sparse_model_path
-
-        text_model_path = self.workspace_path / "text"
-        text_model_path.mkdir(parents=True, exist_ok=True)
-
-        reconstruction = pycolmap.Reconstruction(model_input_path)
-        reconstruction.write_text(text_model_path)
+        self._run_reconstruction()
 
         poses_json_path = self.output_folder / "poses.json"
         points_ply_path = self.output_folder / "points3D.ply"
         intrinsics_json_path = self.output_folder / "intrinsics.json"
 
-        self._save_poses_json(
-            model_path=text_model_path,
-            output_path=poses_json_path,
-        )
+        self._save_poses_json(poses_json_path)
 
-        self._save_intrinsics_json(
-            model_path=text_model_path,
-            output_path=intrinsics_json_path,
-        )
+        self._save_intrinsics_json(intrinsics_json_path)
 
-        self._save_points_ply(
-            model_path=text_model_path,
-            output_path=points_ply_path,
-        )
+        self._save_points_ply(points_ply_path)
 
         return ColmapResults(
             ply_path=str(points_ply_path),
@@ -169,22 +156,24 @@ class ColmapRunner:
         if len(maps) == 0:
             raise RuntimeError("COLMAP mapper did not produce any reconstruction.")
 
+    def _run_reconstruction(self) -> None:
+        reconstruction = pycolmap.Reconstruction(self.sparse_path / "0")
+        reconstruction.write_text(self.text_model_path)
+
     def _save_poses_json(
         self,
-        model_path: Path,
         output_path: Path,
     ) -> None:
-        images = self._parse_images(model_path / "images.txt")
+        images = self._parse_images(self.text_model_path / "images.txt")
 
         with open(output_path, "w") as file:
             json.dump(images, file, indent=2)
 
     def _save_intrinsics_json(
         self,
-        model_path: Path,
         output_path: Path,
     ) -> None:
-        cameras = self._parse_cameras(model_path / "cameras.txt")
+        cameras = self._parse_cameras(self.text_model_path / "cameras.txt")
 
         with open(output_path, "w") as file:
             json.dump(cameras, file, indent=2)
@@ -237,7 +226,14 @@ class ColmapRunner:
     ) -> list[dict]:
         images = []
         with open(images_path) as file:
-            lines = [line.strip() for line in file if line.strip() and not line.startswith("#")]
+            lines = [
+                line.strip()
+                for line in file
+                if (
+                    line.strip()
+                    and not line.startswith("#")
+                )
+            ]  # fmt:skip
 
         for i in range(0, len(lines), 2):
             parts = lines[i].split()
@@ -270,10 +266,9 @@ class ColmapRunner:
 
     def _save_points_ply(
         self,
-        model_path: Path,
         output_path: Path,
     ) -> None:
-        points3d_path = model_path / "points3D.txt"
+        points3d_path = self.text_model_path / "points3D.txt"
         if not points3d_path.exists():
             logger.warning(f"No points3D.txt found at {points3d_path}, skipping PLY export")
             return
