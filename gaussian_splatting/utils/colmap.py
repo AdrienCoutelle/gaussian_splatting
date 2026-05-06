@@ -91,37 +91,15 @@ class ColmapRunner:
                 f"COLMAP images_path must point to an existing image directory, got '{self.configuration.images_path}'."
             )
 
+        self.output_folder = Path(self.configuration.output_folder)
+        self.output_folder.mkdir(parents=True, exist_ok=True)
+
     def run(self) -> ColmapResults:
-        reader_options = pycolmap.ImageReaderOptions(camera_model=self.CAMERA_MODEL)
-        pycolmap.extract_features(
-            database_path=self.database_path,
-            image_path=self.images_path,
-            camera_mode=pycolmap.CameraMode.SINGLE,
-            reader_options=reader_options,
-            device=self.device,
-        )
+        self._run_feature_extraction()
 
-        if self.MATCHER == "exhaustive":
-            pycolmap.match_exhaustive(
-                database_path=self.database_path,
-                device=self.device,
-            )
-        elif self.MATCHER == "sequential":
-            pycolmap.match_sequential(
-                database_path=self.database_path,
-                device=self.device,
-            )
-        else:
-            raise ValueError(f"Unsupported matcher: {self.MATCHER}")
+        self._run_feature_matching()
 
-        maps = pycolmap.incremental_mapping(
-            database_path=self.database_path,
-            image_path=self.images_path,
-            output_path=self.sparse_path,
-        )
-
-        if len(maps) == 0:
-            raise RuntimeError("COLMAP mapper did not produce any reconstruction.")
+        self._run_mapping()
 
         sparse_model_path = self.sparse_path / "0"
         model_input_path = sparse_model_path
@@ -132,12 +110,9 @@ class ColmapRunner:
         reconstruction = pycolmap.Reconstruction(model_input_path)
         reconstruction.write_text(text_model_path)
 
-        output_folder = Path(self.configuration.output_folder)
-        output_folder.mkdir(parents=True, exist_ok=True)
-
-        poses_json_path = output_folder / "poses.json"
-        points_ply_path = output_folder / "points3D.ply"
-        intrinsics_json_path = output_folder / "intrinsics.json"
+        poses_json_path = self.output_folder / "poses.json"
+        points_ply_path = self.output_folder / "points3D.ply"
+        intrinsics_json_path = self.output_folder / "intrinsics.json"
 
         self._save_poses_json(
             model_path=text_model_path,
@@ -159,6 +134,40 @@ class ColmapRunner:
             poses_path=str(poses_json_path),
             intrinsics_path=str(intrinsics_json_path),
         )
+
+    def _run_feature_extraction(self) -> None:
+        reader_options = pycolmap.ImageReaderOptions(camera_model=self.CAMERA_MODEL)
+        pycolmap.extract_features(
+            database_path=self.database_path,
+            image_path=self.images_path,
+            camera_mode=pycolmap.CameraMode.SINGLE,
+            reader_options=reader_options,
+            device=self.device,
+        )
+
+    def _run_feature_matching(self) -> None:
+        if self.MATCHER == "exhaustive":
+            pycolmap.match_exhaustive(
+                database_path=self.database_path,
+                device=self.device,
+            )
+        elif self.MATCHER == "sequential":
+            pycolmap.match_sequential(
+                database_path=self.database_path,
+                device=self.device,
+            )
+        else:
+            raise ValueError(f"Unsupported matcher: {self.MATCHER}")
+
+    def _run_mapping(self) -> None:
+        maps = pycolmap.incremental_mapping(
+            database_path=self.database_path,
+            image_path=self.images_path,
+            output_path=self.sparse_path,
+        )
+
+        if len(maps) == 0:
+            raise RuntimeError("COLMAP mapper did not produce any reconstruction.")
 
     def _save_poses_json(
         self,
