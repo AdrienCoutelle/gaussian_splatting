@@ -18,6 +18,7 @@ dependencies = [
   "plyfile",
   "pyyaml",
   "pycolmap",
+  "pygame",
 ]
 
 [project.optional-dependencies]

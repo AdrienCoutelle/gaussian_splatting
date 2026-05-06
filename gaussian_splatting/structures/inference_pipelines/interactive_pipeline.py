@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
+import pygame
 import torch
 
 from gaussian_splatting.structures.camera import Camera
@@ -98,22 +99,73 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
 
         self.device = device
 
+        self.position = np.array(self.configuration.initial_position, dtype=np.float32)
+        self.look_at = np.array(self.configuration.initial_look_at, dtype=np.float32)
+
+        forward = self.look_at - self.position
+        forward = forward / np.linalg.norm(forward)
+        self.yaw = np.arctan2(forward[1], forward[0])
+        self.pitch = np.arcsin(-forward[2])
+
+        self.mouse_sensitivity = 0.002
+        self.movement_speed = 0.1
+
     def run(self) -> None:
+        pygame.init()
+        screen = pygame.display.set_mode(
+            (self.renderer.config.width, self.renderer.config.height),
+        )
+        pygame.display.set_caption("Gaussian Splatting Interactive Viewer")
+        pygame.mouse.set_visible(False)
+        pygame.event.set_grab(True)
+
+        clock = pygame.time.Clock()
+        running = True
+        frame_count = 0
+
         with torch.no_grad():
-            pose = torch.from_numpy(  # noqa: F841
-                self._compute_pose_look_at(
-                    position=np.array(self.configuration.initial_position),
-                    look_at=np.array(self.configuration.initial_look_at),
-                    world_up=np.array([0, 0, 1]),
+            while running:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running = False
+                    elif event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            running = False
+                        elif event.key == pygame.K_s:
+                            self._save_current_view()
+                    elif event.type == pygame.MOUSEMOTION:
+                        self._handle_mouse_movement(
+                            dx=event.rel[0],
+                            dy=event.rel[1],
+                        )
+
+                self._handle_keyboard_input()
+
+                self._update_look_at()
+
+                pose = torch.from_numpy(
+                    self._compute_pose_look_at(
+                        position=self.position,
+                        look_at=self.look_at,
+                        world_up=np.array([0, 0, 1]),
+                    )
                 )
-            )
 
-            image_bgr = self._render_image(pose)
+                image_bgr = self._render_image(pose)
+                image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
-            cv2.imwrite(
-                filename=self.output_path,
-                img=image_bgr,
-            )
+                surface = pygame.surfarray.make_surface(image_rgb.swapaxes(0, 1))
+                screen.blit(surface, (0, 0))
+
+                pygame.display.flip()
+                clock.tick(60)
+
+                frame_count += 1
+                if frame_count % 60 == 0:
+                    fps = clock.get_fps()
+                    print(f"FPS: {fps:.1f}")
+
+        pygame.quit()
 
     def _render_image(
         self,
@@ -133,3 +185,76 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
 
         image_array = (rendered_image.array * 255).astype(np.uint8)
         return cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+
+    def _handle_mouse_movement(
+        self,
+        dx: int,
+        dy: int,
+    ) -> None:
+        self.yaw += dx * self.mouse_sensitivity
+        self.pitch -= dy * self.mouse_sensitivity
+
+        self.pitch = np.clip(self.pitch, -np.pi / 2 + 0.01, np.pi / 2 - 0.01)
+
+    def _update_look_at(self) -> None:
+        forward = np.array(
+            [
+                np.cos(self.pitch) * np.cos(self.yaw),
+                np.cos(self.pitch) * np.sin(self.yaw),
+                -np.sin(self.pitch),
+            ],
+            dtype=np.float32,
+        )
+        self.look_at = self.position + forward
+
+    def _handle_keyboard_input(self) -> None:
+        keys = pygame.key.get_pressed()
+
+        forward = self.look_at - self.position
+        forward = forward / np.linalg.norm(forward)
+
+        right = np.cross(forward, np.array([0, 0, 1]))
+        right_norm = np.linalg.norm(right)
+        if right_norm > 1e-6:
+            right = right / right_norm
+        else:
+            right = np.array([1, 0, 0])
+
+        up = np.cross(right, forward)
+
+        if keys[pygame.K_w]:
+            self.position += forward * self.movement_speed
+        if keys[pygame.K_s]:
+            self.position -= forward * self.movement_speed
+        if keys[pygame.K_a]:
+            self.position -= right * self.movement_speed
+        if keys[pygame.K_d]:
+            self.position += right * self.movement_speed
+        if keys[pygame.K_SPACE]:
+            self.position += up * self.movement_speed
+        if keys[pygame.K_LSHIFT]:
+            self.position -= up * self.movement_speed
+
+    def _save_current_view(self) -> None:
+        pose = torch.from_numpy(
+            self._compute_pose_look_at(
+                position=self.position,
+                look_at=self.look_at,
+                world_up=np.array([0, 0, 1]),
+            )
+        )
+
+        image_bgr = self._render_image(pose)
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_path = os.path.join(
+            self.output_folder,
+            f"screenshot_{timestamp}.jpg",
+        )
+
+        cv2.imwrite(
+            filename=save_path,
+            img=image_bgr,
+        )
+
+        print(f"Screenshot saved to {save_path}")
