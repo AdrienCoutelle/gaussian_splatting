@@ -8,6 +8,10 @@ from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
+from gaussian_splatting.structures.inference_pipelines.interactive_pipeline import (
+    InteractiveInferencePipeline,
+    InteractiveInferencePipelineParams,
+)
 from gaussian_splatting.structures.inference_pipelines.orbit_video_inference_pipeline import (
     OrbitPipelineInferenceParams,
     OrbitVideoInferencePipeline,
@@ -22,6 +26,7 @@ from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
 class InferencePipelineName(StrEnum):
     POSITION = "position"
     ORBIT = "orbit"
+    INTERACTIVE = "interactive"
 
 
 @dataclass
@@ -70,6 +75,12 @@ class InferencePipelineConfig:
                 parameters=OrbitPipelineInferenceParams.from_dict(parameters),
             )
 
+        if name == InferencePipelineName.INTERACTIVE:
+            return InferencePipelineConfig(
+                name=name,
+                parameters=InteractiveInferencePipelineParams.from_dict(parameters),
+            )
+
 
 class InferencePipelineFactory:
     @staticmethod
@@ -97,6 +108,17 @@ class InferencePipelineFactory:
         if pipeline_name == InferencePipelineName.ORBIT:
             assert isinstance(configuration.parameters, OrbitPipelineInferenceParams)
             return OrbitVideoInferencePipeline(
+                renderer=renderer,
+                gaussians=gaussians,
+                configuration=configuration.parameters,
+                output_folder=output_folder,
+                device=device,
+                epoch=epoch,
+            )
+
+        if pipeline_name == InferencePipelineName.INTERACTIVE:
+            assert isinstance(configuration.parameters, InteractiveInferencePipelineParams)
+            return InteractiveInferencePipeline(
                 renderer=renderer,
                 gaussians=gaussians,
                 configuration=configuration.parameters,
