@@ -174,16 +174,10 @@ class ColmapRunner:
         model_path: Path,
         output_path: Path,
     ) -> None:
-        cameras = self._parse_cameras(model_path / "cameras.txt")
         images = self._parse_images(model_path / "images.txt")
 
-        data = {
-            "cameras": cameras,
-            "images": images,
-        }
-
         with open(output_path, "w") as file:
-            json.dump(data, file, indent=2)
+            json.dump(images, file, indent=2)
 
     def _save_intrinsics_json(
         self,
