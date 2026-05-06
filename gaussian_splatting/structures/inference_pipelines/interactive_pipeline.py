@@ -102,28 +102,34 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
         with torch.no_grad():
             pose = torch.from_numpy(  # noqa: F841
                 self._compute_pose_look_at(
-                    position=np.array(self.configuration.position),
-                    look_at=np.array(self.configuration.look_at),
+                    position=np.array(self.configuration.initial_position),
+                    look_at=np.array(self.configuration.initial_look_at),
                     world_up=np.array([0, 0, 1]),
                 )
             )
 
-            camera = Camera(
-                pose=pose,
-                focal_length=self.renderer.config.focal_length,
-                width=self.renderer.config.width,
-                height=self.renderer.config.height,
-            )
-
-            rendered_image = self.renderer.render(
-                camera=camera,
-                gaussians=self.gaussians,
-            )
-
-            image_array = (rendered_image.array * 255).astype(np.uint8)
-            image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+            image_bgr = self._render_image(pose)
 
             cv2.imwrite(
                 filename=self.output_path,
                 img=image_bgr,
             )
+
+    def _render_image(
+        self,
+        pose: torch.Tensor,
+    ) -> np.ndarray:
+        camera = Camera(
+            pose=pose,
+            focal_length=self.renderer.config.focal_length,
+            width=self.renderer.config.width,
+            height=self.renderer.config.height,
+        )
+
+        rendered_image = self.renderer.render(
+            camera=camera,
+            gaussians=self.gaussians,
+        )
+
+        image_array = (rendered_image.array * 255).astype(np.uint8)
+        return cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
