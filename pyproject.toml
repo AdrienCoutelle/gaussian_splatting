@@ -15,7 +15,9 @@ dependencies = [
   "opencv-python",
   "click",
   "scikit-image",
+  "plyfile",
   "pyyaml",
+  "pycolmap",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +28,7 @@ tests = [
 [project.scripts]
 launch_gaussian_splatting_training = "gaussian_splatting.launch_training:main"
 launch_gaussian_splatting_inference = "gaussian_splatting.launch_inference:main"
+launch_gaussian_splatting_colmap = "gaussian_splatting.launch_colmap:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "gaussian_splatting.__version__"}
