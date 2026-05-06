@@ -1,6 +1,8 @@
 import json
+import os
 import tempfile
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 
 import pycolmap
@@ -8,6 +10,25 @@ import pycolmap
 from gaussian_splatting.utils.logger import Logger
 
 logger = Logger("COLMAP")
+
+
+def suppress_output_wrapper(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with open(os.devnull, "w") as devnull:
+            old_stdout_fd = os.dup(1)
+            old_stderr_fd = os.dup(2)
+            os.dup2(devnull.fileno(), 1)
+            os.dup2(devnull.fileno(), 2)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                os.dup2(old_stdout_fd, 1)
+                os.dup2(old_stderr_fd, 2)
+                os.close(old_stdout_fd)
+                os.close(old_stderr_fd)
+
+    return wrapper
 
 
 @dataclass
@@ -113,12 +134,16 @@ class ColmapRunner:
         self.output_folder.mkdir(parents=True, exist_ok=True)
 
     def run(self) -> ColmapResults:
+        logger.info("Extracting features...")
         self._run_feature_extraction()
 
+        logger.info("Matching features...")
         self._run_feature_matching()
 
+        logger.info("Running mapping...")
         self._run_mapping()
 
+        logger.info("Running reconstruction...")
         self._run_reconstruction()
 
         self._save_poses_json()
@@ -133,6 +158,7 @@ class ColmapRunner:
             intrinsics_path=str(self.output_folder / self.configuration.intrinsics_filename),
         )
 
+    @suppress_output_wrapper
     def _run_feature_extraction(self) -> None:
         reader_options = pycolmap.ImageReaderOptions(camera_model=self.CAMERA_MODEL)
         pycolmap.extract_features(
@@ -143,6 +169,7 @@ class ColmapRunner:
             device=self.device,
         )
 
+    @suppress_output_wrapper
     def _run_feature_matching(self) -> None:
         if self.MATCHER == "exhaustive":
             pycolmap.match_exhaustive(
@@ -157,6 +184,7 @@ class ColmapRunner:
         else:
             raise ValueError(f"Unsupported matcher: {self.MATCHER}")
 
+    @suppress_output_wrapper
     def _run_mapping(self) -> None:
         maps = pycolmap.incremental_mapping(
             database_path=self.database_path,
@@ -167,6 +195,7 @@ class ColmapRunner:
         if len(maps) == 0:
             raise RuntimeError("COLMAP mapper did not produce any reconstruction.")
 
+    @suppress_output_wrapper
     def _run_reconstruction(self) -> None:
         reconstruction = pycolmap.Reconstruction(self.sparse_path / "0")
         reconstruction.write_text(self.text_model_path)

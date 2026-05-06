@@ -19,13 +19,7 @@ def main(config_path: str) -> None:
     config = ColmapConfig.from_dict(config_dict)
     runner = ColmapRunner(config)
 
-    logger.info("Starting COLMAP reconstruction...")
-    results = runner.run()
-
-    logger.info("COLMAP reconstruction complete!")
-    logger.info(f"PLY: {results.ply_path}")
-    logger.info(f"Poses: {results.poses_path}")
-    logger.info(f"Intrinsics: {results.intrinsics_path}")
+    runner.run()
 
 
 if __name__ == "__main__":
