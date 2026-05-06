@@ -21,6 +21,9 @@ class ColmapResults:
 class ColmapConfig:
     images_path: str
     output_folder: str
+    poses_filename: str
+    intrinsics_filename: str
+    points_filename: str
 
     @classmethod
     def from_dict(
@@ -43,15 +46,27 @@ class ColmapConfig:
 
         images_path = configuration["images_path"]
         output_folder = configuration["output_folder"]
+        poses_filename = configuration["poses_filename"]
+        intrinsics_filename = configuration["intrinsics_filename"]
+        points_filename = configuration["points_filename"]
 
         if not isinstance(images_path, str):
             raise ValueError(f"ColmapConfig 'images_path' must be a string, got '{images_path}'.")
         if not isinstance(output_folder, str):
             raise ValueError(f"ColmapConfig 'output_folder' must be a string, got '{output_folder}'.")
+        if not isinstance(poses_filename, str):
+            raise ValueError(f"ColmapConfig 'poses_filename' must be a string, got '{poses_filename}'.")
+        if not isinstance(intrinsics_filename, str):
+            raise ValueError(f"ColmapConfig 'intrinsics_filename' must be a string, got '{intrinsics_filename}'.")
+        if not isinstance(points_filename, str):
+            raise ValueError(f"ColmapConfig 'points_filename' must be a string, got '{points_filename}'.")
 
         return ColmapConfig(
             images_path=images_path,
             output_folder=output_folder,
+            poses_filename=poses_filename,
+            intrinsics_filename=intrinsics_filename,
+            points_filename=points_filename,
         )
 
 
@@ -106,20 +121,16 @@ class ColmapRunner:
 
         self._run_reconstruction()
 
-        poses_json_path = self.output_folder / "poses.json"
-        points_ply_path = self.output_folder / "points3D.ply"
-        intrinsics_json_path = self.output_folder / "intrinsics.json"
+        self._save_poses_json()
 
-        self._save_poses_json(poses_json_path)
+        self._save_intrinsics_json()
 
-        self._save_intrinsics_json(intrinsics_json_path)
-
-        self._save_points_ply(points_ply_path)
+        self._save_points_ply()
 
         return ColmapResults(
-            ply_path=str(points_ply_path),
-            poses_path=str(poses_json_path),
-            intrinsics_path=str(intrinsics_json_path),
+            ply_path=str(self.output_folder / self.configuration.points_filename),
+            poses_path=str(self.output_folder / self.configuration.poses_filename),
+            intrinsics_path=str(self.output_folder / self.configuration.intrinsics_filename),
         )
 
     def _run_feature_extraction(self) -> None:
@@ -160,19 +171,17 @@ class ColmapRunner:
         reconstruction = pycolmap.Reconstruction(self.sparse_path / "0")
         reconstruction.write_text(self.text_model_path)
 
-    def _save_poses_json(
-        self,
-        output_path: Path,
-    ) -> None:
+    def _save_poses_json(self) -> None:
+        output_path = self.output_folder / self.configuration.poses_filename
+
         images = self._parse_images(self.text_model_path / "images.txt")
 
         with open(output_path, "w") as file:
             json.dump(images, file, indent=2)
 
-    def _save_intrinsics_json(
-        self,
-        output_path: Path,
-    ) -> None:
+    def _save_intrinsics_json(self) -> None:
+        output_path = self.output_folder / self.configuration.intrinsics_filename
+
         cameras = self._parse_cameras(self.text_model_path / "cameras.txt")
 
         with open(output_path, "w") as file:
@@ -264,10 +273,8 @@ class ColmapRunner:
 
         return images
 
-    def _save_points_ply(
-        self,
-        output_path: Path,
-    ) -> None:
+    def _save_points_ply(self) -> None:
+        output_path = self.output_folder / self.configuration.points_filename
         points3d_path = self.text_model_path / "points3D.txt"
         if not points3d_path.exists():
             logger.warning(f"No points3D.txt found at {points3d_path}, skipping PLY export")

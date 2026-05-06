@@ -1,2 +1,5 @@
 images_path: datasets/lego/train
 output_folder: output/colmap/lego
+poses_filename: poses.json
+intrinsics_filename: intrinsics.json
+points_filename: points3D.ply
