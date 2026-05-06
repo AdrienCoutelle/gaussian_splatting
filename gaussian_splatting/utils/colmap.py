@@ -32,13 +32,6 @@ def suppress_output_wrapper(func):
 
 
 @dataclass
-class ColmapResults:
-    ply_path: str
-    poses_path: str
-    intrinsics_path: str
-
-
-@dataclass
 class ColmapConfig:
     images_path: str
     output_folder: str
@@ -133,17 +126,17 @@ class ColmapRunner:
         self.output_folder = Path(self.configuration.output_folder)
         self.output_folder.mkdir(parents=True, exist_ok=True)
 
-    def run(self) -> ColmapResults:
-        logger.info("Extracting features...")
+    def run(self) -> None:
+        logger.info("Running COLMAP [1/4]: Extracting features...")
         self._run_feature_extraction()
 
-        logger.info("Matching features...")
+        logger.info("Running COLMAP [2/4]: Matching features...")
         self._run_feature_matching()
 
-        logger.info("Running mapping...")
+        logger.info("Running COLMAP [3/4]: Running mapping...")
         self._run_mapping()
 
-        logger.info("Running reconstruction...")
+        logger.info("Running COLMAP [4/4]: Running reconstruction...")
         self._run_reconstruction()
 
         self._save_poses_json()
@@ -151,12 +144,6 @@ class ColmapRunner:
         self._save_intrinsics_json()
 
         self._save_points_ply()
-
-        return ColmapResults(
-            ply_path=str(self.output_folder / self.configuration.points_filename),
-            poses_path=str(self.output_folder / self.configuration.poses_filename),
-            intrinsics_path=str(self.output_folder / self.configuration.intrinsics_filename),
-        )
 
     @suppress_output_wrapper
     def _run_feature_extraction(self) -> None:
@@ -208,6 +195,8 @@ class ColmapRunner:
         with open(output_path, "w") as file:
             json.dump(images, file, indent=2)
 
+        logger.info(f"Saved camera poses to {output_path}")
+
     def _save_intrinsics_json(self) -> None:
         output_path = self.output_folder / self.configuration.intrinsics_filename
 
@@ -215,6 +204,8 @@ class ColmapRunner:
 
         with open(output_path, "w") as file:
             json.dump(cameras, file, indent=2)
+
+        logger.info(f"Saved camera intrinsics to {output_path}")
 
     def _parse_cameras(
         self,
@@ -340,3 +331,5 @@ class ColmapRunner:
 
             for x, y, z, r, g, b in points:
                 file.write(f"{x} {y} {z} {r} {g} {b}\n")
+
+        logger.info(f"Saved 3D points to {output_path}")
