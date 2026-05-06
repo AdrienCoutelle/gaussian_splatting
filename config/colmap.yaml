@@ -1,0 +1,2 @@
+images_path: datasets/lego/train
+output_folder: output/colmap/lego
