@@ -43,6 +43,7 @@ class ColmapConfig:
 
         images_path = configuration["images_path"]
         output_folder = configuration["output_folder"]
+
         if not isinstance(images_path, str):
             raise ValueError(f"ColmapConfig 'images_path' must be a string, got '{images_path}'.")
         if not isinstance(output_folder, str):
@@ -67,72 +68,67 @@ class ColmapRunner:
         self.device = pycolmap.Device.auto
         self.temp_dir = tempfile.TemporaryDirectory()
 
-    def run(self) -> ColmapResults:
-        workspace_path = Path(self.temp_dir.name)
-        workspace_path.mkdir(
+        self.workspace_path = Path(self.temp_dir.name)
+        self.workspace_path.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        sparse_path = workspace_path / "sparse"
-        sparse_path.mkdir(
+        self.sparse_path = self.workspace_path / "sparse"
+        self.sparse_path.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        database_path = workspace_path / "database.db"
+        self.database_path = self.workspace_path / "database.db"
 
-        images_path = Path(self.configuration.images_path)
+        self.images_path = Path(self.configuration.images_path)
         if (
-            not images_path.exists()
-            or not images_path.is_dir()
+            not self.images_path.exists()
+            or not self.images_path.is_dir()
         ):  # fmt:skip
             raise FileNotFoundError(
                 f"COLMAP images_path must point to an existing image directory, got '{self.configuration.images_path}'."
             )
 
-        logger.info("Extracting features...")
-
+    def run(self) -> ColmapResults:
         reader_options = pycolmap.ImageReaderOptions(camera_model=self.CAMERA_MODEL)
         pycolmap.extract_features(
-            database_path=database_path,
-            image_path=images_path,
+            database_path=self.database_path,
+            image_path=self.images_path,
             camera_mode=pycolmap.CameraMode.SINGLE,
             reader_options=reader_options,
             device=self.device,
         )
 
-        logger.info("Matching features...")
         if self.MATCHER == "exhaustive":
             pycolmap.match_exhaustive(
-                database_path=database_path,
+                database_path=self.database_path,
                 device=self.device,
             )
         elif self.MATCHER == "sequential":
             pycolmap.match_sequential(
-                database_path=database_path,
+                database_path=self.database_path,
                 device=self.device,
             )
         else:
             raise ValueError(f"Unsupported matcher: {self.MATCHER}")
 
-        logger.info("Running incremental mapping...")
         maps = pycolmap.incremental_mapping(
-            database_path=database_path,
-            image_path=images_path,
-            output_path=sparse_path,
+            database_path=self.database_path,
+            image_path=self.images_path,
+            output_path=self.sparse_path,
         )
 
         if len(maps) == 0:
             raise RuntimeError("COLMAP mapper did not produce any reconstruction.")
 
-        sparse_model_path = sparse_path / "0"
+        sparse_model_path = self.sparse_path / "0"
         model_input_path = sparse_model_path
 
-        text_model_path = workspace_path / "text"
+        text_model_path = self.workspace_path / "text"
         text_model_path.mkdir(parents=True, exist_ok=True)
 
-        logger.info("Exporting model to text format...")
         reconstruction = pycolmap.Reconstruction(model_input_path)
         reconstruction.write_text(text_model_path)
 
@@ -180,8 +176,6 @@ class ColmapRunner:
         with open(output_path, "w") as file:
             json.dump(data, file, indent=2)
 
-        logger.info(f"Saved poses and camera info to {output_path}")
-
     def _save_intrinsics_json(
         self,
         model_path: Path,
@@ -191,8 +185,6 @@ class ColmapRunner:
 
         with open(output_path, "w") as file:
             json.dump(cameras, file, indent=2)
-
-        logger.info(f"Saved camera intrinsics to {output_path}")
 
     def _parse_cameras(
         self,
@@ -314,5 +306,3 @@ class ColmapRunner:
 
             for x, y, z, r, g, b in points:
                 file.write(f"{x} {y} {z} {r} {g} {b}\n")
-
-        logger.info(f"Saved {len(points)} 3D points to {output_path}")
