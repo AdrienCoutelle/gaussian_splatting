@@ -136,8 +136,6 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
                             running = False
-                        elif event.key == pygame.K_p:
-                            self._save_current_view()
                     elif event.type == pygame.MOUSEMOTION:
                         self._handle_mouse_movement(
                             dx=event.rel[0],
@@ -240,27 +238,3 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
             self.position += up * self.movement_speed
         if keys[pygame.K_LSHIFT]:
             self.position -= up * self.movement_speed
-
-    def _save_current_view(self) -> None:
-        pose = torch.from_numpy(
-            self._compute_pose_look_at(
-                position=self.position,
-                look_at=self.look_at,
-                world_up=np.array([0, 0, 1]),
-            )
-        )
-
-        image_bgr = self._render_image(pose)
-
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_path = os.path.join(
-            self.output_folder,
-            f"screenshot_{timestamp}.jpg",
-        )
-
-        cv2.imwrite(
-            filename=save_path,
-            img=image_bgr,
-        )
-
-        print(f"Screenshot saved to {save_path}")
