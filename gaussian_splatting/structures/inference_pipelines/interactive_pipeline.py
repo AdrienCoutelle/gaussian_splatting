@@ -105,15 +105,20 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
         forward = self.look_at - self.position
         forward = forward / np.linalg.norm(forward)
         self.yaw = np.arctan2(forward[1], forward[0])
-        self.pitch = np.arcsin(-forward[2])
+        self.pitch = np.arcsin(forward[2])
 
-        self.mouse_sensitivity = 0.002
+        self.mouse_sensitivity = 0.005
         self.movement_speed = 0.1
+
+        print(f"Initial pitch: {np.degrees(self.pitch):.1f}°, yaw: {np.degrees(self.yaw):.1f}°")
 
     def run(self) -> None:
         pygame.init()
         screen = pygame.display.set_mode(
-            (self.renderer.config.width, self.renderer.config.height),
+            (
+                self.renderer.config.width,
+                self.renderer.config.height,
+            ),
         )
         pygame.display.set_caption("Gaussian Splatting Interactive Viewer")
         pygame.mouse.set_visible(False)
@@ -131,7 +136,7 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_ESCAPE:
                             running = False
-                        elif event.key == pygame.K_s:
+                        elif event.key == pygame.K_p:
                             self._save_current_view()
                     elif event.type == pygame.MOUSEMOTION:
                         self._handle_mouse_movement(
@@ -163,7 +168,7 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
                 frame_count += 1
                 if frame_count % 60 == 0:
                     fps = clock.get_fps()
-                    print(f"FPS: {fps:.1f}")
+                    print(f"FPS: {fps:.1f} | Pitch: {np.degrees(self.pitch):.1f}° | Yaw: {np.degrees(self.yaw):.1f}°")
 
         pygame.quit()
 
@@ -191,17 +196,18 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
         dx: int,
         dy: int,
     ) -> None:
-        self.yaw += dx * self.mouse_sensitivity
+        self.yaw -= dx * self.mouse_sensitivity
         self.pitch -= dy * self.mouse_sensitivity
 
-        self.pitch = np.clip(self.pitch, -np.pi / 2 + 0.01, np.pi / 2 - 0.01)
+        max_pitch = np.pi / 2 - 0.001
+        self.pitch = np.clip(self.pitch, -max_pitch, max_pitch)
 
     def _update_look_at(self) -> None:
         forward = np.array(
             [
                 np.cos(self.pitch) * np.cos(self.yaw),
                 np.cos(self.pitch) * np.sin(self.yaw),
-                -np.sin(self.pitch),
+                np.sin(self.pitch),
             ],
             dtype=np.float32,
         )
@@ -227,9 +233,9 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
         if keys[pygame.K_s]:
             self.position -= forward * self.movement_speed
         if keys[pygame.K_a]:
-            self.position -= right * self.movement_speed
-        if keys[pygame.K_d]:
             self.position += right * self.movement_speed
+        if keys[pygame.K_d]:
+            self.position -= right * self.movement_speed
         if keys[pygame.K_SPACE]:
             self.position += up * self.movement_speed
         if keys[pygame.K_LSHIFT]:
