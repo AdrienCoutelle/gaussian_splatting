@@ -1,5 +1,3 @@
-import datetime
-import os
 from dataclasses import dataclass
 
 import cv2
@@ -14,6 +12,160 @@ from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     InferencePipelineParams,
 )
 from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
+
+
+class StopInferenceException(Exception):
+    """Raised when the user wants to stop the interactive inference."""
+
+    pass
+
+
+class InteractiveInputHandler:
+    def __init__(
+        self,
+        initial_position: list[float],
+        initial_look_at: list[float],
+        width: int,
+        height: int,
+        mouse_sensitivity: float = 0.0025,
+        movement_speed: float = 0.05,
+    ):
+        self.position = np.array(initial_position, dtype=np.float32)
+        self.look_at = np.array(initial_look_at, dtype=np.float32)
+
+        forward = self.look_at - self.position
+        forward = forward / np.linalg.norm(forward)
+        self.yaw = np.arctan2(forward[1], forward[0])
+        self.pitch = np.arcsin(forward[2])
+
+        self.mouse_sensitivity = mouse_sensitivity
+        self.movement_speed = movement_speed
+
+        pygame.init()
+        self.screen = pygame.display.set_mode((width, height))
+        pygame.display.set_caption("Gaussian Splatting Interactive Viewer")
+        pygame.mouse.set_visible(False)
+        pygame.event.set_grab(True)
+
+        self.clock = pygame.time.Clock()
+        self.frame_count = 0
+
+        print(f"Initial pitch: {np.degrees(self.pitch):.1f}°, yaw: {np.degrees(self.yaw):.1f}°")
+
+    def get_next_pose(
+        self,
+        compute_pose_fn: callable,
+    ) -> tuple[torch.Tensor, pygame.Surface]:
+        """
+        Process input events and return the updated pose.
+
+        Args:
+            compute_pose_fn: Function that computes pose from position, look_at, and world_up
+
+        Returns:
+            Tuple of (pose tensor, pygame surface to render to)
+
+        Raises:
+            StopInferenceException: When the user wants to quit
+        """
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                raise StopInferenceException("User closed the window")
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    raise StopInferenceException("User pressed ESC")
+            elif event.type == pygame.MOUSEMOTION:
+                self._handle_mouse_movement(
+                    dx=event.rel[0],
+                    dy=event.rel[1],
+                )
+            elif event.type == pygame.MOUSEWHEEL:
+                self._handle_forward_movement(step=float(event.y))
+
+        self._handle_keyboard_input()
+        self._update_look_at()
+
+        pose = torch.from_numpy(
+            compute_pose_fn(
+                position=self.position,
+                look_at=self.look_at,
+                world_up=np.array([0, 0, 1]),
+            )
+        )
+
+        return pose, self.screen
+
+    def update_display(self) -> None:
+        """Update the display and tick the clock."""
+        pygame.display.flip()
+        self.clock.tick(60)
+
+        self.frame_count += 1
+        if self.frame_count % 60 == 0:
+            fps = self.clock.get_fps()
+            print(f"FPS: {fps:.1f} | Pitch: {np.degrees(self.pitch):.1f}° | Yaw: {np.degrees(self.yaw):.1f}°")
+
+    def cleanup(self) -> None:
+        """Clean up pygame resources."""
+        pygame.quit()
+
+    def _handle_mouse_movement(
+        self,
+        dx: int,
+        dy: int,
+    ) -> None:
+        self.yaw -= dx * self.mouse_sensitivity
+        self.pitch -= dy * self.mouse_sensitivity
+
+        max_pitch = np.pi / 2 - 0.001
+        self.pitch = np.clip(self.pitch, -max_pitch, max_pitch)
+
+    def _update_look_at(self) -> None:
+        forward = np.array(
+            [
+                np.cos(self.pitch) * np.cos(self.yaw),
+                np.cos(self.pitch) * np.sin(self.yaw),
+                np.sin(self.pitch),
+            ],
+            dtype=np.float32,
+        )
+        self.look_at = self.position + forward
+
+    def _handle_forward_movement(
+        self,
+        step: float,
+    ) -> None:
+        forward = self.look_at - self.position
+        forward = forward / np.linalg.norm(forward)
+        self.position += forward * self.movement_speed * step
+
+    def _handle_keyboard_input(self) -> None:
+        keys = pygame.key.get_pressed()
+
+        forward = self.look_at - self.position
+        forward = forward / np.linalg.norm(forward)
+
+        right = np.cross(forward, np.array([0, 0, 1]))
+        right_norm = np.linalg.norm(right)
+        if right_norm > 1e-6:
+            right = right / right_norm
+        else:
+            right = np.array([1, 0, 0])
+
+        up = np.cross(right, forward)
+
+        if keys[pygame.K_f]:
+            self.position += forward * self.movement_speed
+        if keys[pygame.K_b]:
+            self.position -= forward * self.movement_speed
+        if keys[pygame.K_LEFT]:
+            self.position -= right * self.movement_speed
+        if keys[pygame.K_RIGHT]:
+            self.position += right * self.movement_speed
+        if keys[pygame.K_UP]:
+            self.position += up * self.movement_speed
+        if keys[pygame.K_DOWN]:
+            self.position -= up * self.movement_speed
 
 
 @dataclass
@@ -83,92 +235,34 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
 
         self.renderer = renderer
         self.gaussians = gaussians
-
-        os.makedirs(self.output_folder, exist_ok=True)
-
-        output_name = (
-            f"position_epoch_{self.epoch}.jpg"
-            if self.epoch is not None
-            else f"single_image_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        )
-
-        self.output_path = os.path.join(
-            self.output_folder,
-            output_name,
-        )
-
         self.device = device
 
-        self.position = np.array(self.configuration.initial_position, dtype=np.float32)
-        self.look_at = np.array(self.configuration.initial_look_at, dtype=np.float32)
-
-        forward = self.look_at - self.position
-        forward = forward / np.linalg.norm(forward)
-        self.yaw = np.arctan2(forward[1], forward[0])
-        self.pitch = np.arcsin(forward[2])
-
-        self.mouse_sensitivity = 0.005
-        self.movement_speed = 0.1
-
-        print(f"Initial pitch: {np.degrees(self.pitch):.1f}°, yaw: {np.degrees(self.yaw):.1f}°")
+        self.input_handler = InteractiveInputHandler(
+            initial_position=self.configuration.initial_position,
+            initial_look_at=self.configuration.initial_look_at,
+            width=self.renderer.config.width,
+            height=self.renderer.config.height,
+        )
 
     def run(self) -> None:
-        pygame.init()
-        screen = pygame.display.set_mode(
-            (
-                self.renderer.config.width,
-                self.renderer.config.height,
-            ),
-        )
-        pygame.display.set_caption("Gaussian Splatting Interactive Viewer")
-        pygame.mouse.set_visible(False)
-        pygame.event.set_grab(True)
-
-        clock = pygame.time.Clock()
-        running = True
-        frame_count = 0
-
-        with torch.no_grad():
-            while running:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        running = False
-                    elif event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_ESCAPE:
-                            running = False
-                    elif event.type == pygame.MOUSEMOTION:
-                        self._handle_mouse_movement(
-                            dx=event.rel[0],
-                            dy=event.rel[1],
-                        )
-
-                self._handle_keyboard_input()
-
-                self._update_look_at()
-
-                pose = torch.from_numpy(
-                    self._compute_pose_look_at(
-                        position=self.position,
-                        look_at=self.look_at,
-                        world_up=np.array([0, 0, 1]),
+        try:
+            with torch.no_grad():
+                while True:
+                    pose, screen = self.input_handler.get_next_pose(
+                        compute_pose_fn=self._compute_pose_look_at,
                     )
-                )
 
-                image_bgr = self._render_image(pose)
-                image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                    image_bgr = self._render_image(pose)
+                    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
-                surface = pygame.surfarray.make_surface(image_rgb.swapaxes(0, 1))
-                screen.blit(surface, (0, 0))
+                    surface = pygame.surfarray.make_surface(image_rgb.swapaxes(0, 1))
+                    screen.blit(surface, (0, 0))
 
-                pygame.display.flip()
-                clock.tick(60)
-
-                frame_count += 1
-                if frame_count % 60 == 0:
-                    fps = clock.get_fps()
-                    print(f"FPS: {fps:.1f} | Pitch: {np.degrees(self.pitch):.1f}° | Yaw: {np.degrees(self.yaw):.1f}°")
-
-        pygame.quit()
+                    self.input_handler.update_display()
+        except StopInferenceException as e:
+            print(f"Stopping interactive inference: {e}")
+        finally:
+            self.input_handler.cleanup()
 
     def _render_image(
         self,
@@ -188,53 +282,3 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
 
         image_array = (rendered_image.array * 255).astype(np.uint8)
         return cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
-
-    def _handle_mouse_movement(
-        self,
-        dx: int,
-        dy: int,
-    ) -> None:
-        self.yaw -= dx * self.mouse_sensitivity
-        self.pitch -= dy * self.mouse_sensitivity
-
-        max_pitch = np.pi / 2 - 0.001
-        self.pitch = np.clip(self.pitch, -max_pitch, max_pitch)
-
-    def _update_look_at(self) -> None:
-        forward = np.array(
-            [
-                np.cos(self.pitch) * np.cos(self.yaw),
-                np.cos(self.pitch) * np.sin(self.yaw),
-                np.sin(self.pitch),
-            ],
-            dtype=np.float32,
-        )
-        self.look_at = self.position + forward
-
-    def _handle_keyboard_input(self) -> None:
-        keys = pygame.key.get_pressed()
-
-        forward = self.look_at - self.position
-        forward = forward / np.linalg.norm(forward)
-
-        right = np.cross(forward, np.array([0, 0, 1]))
-        right_norm = np.linalg.norm(right)
-        if right_norm > 1e-6:
-            right = right / right_norm
-        else:
-            right = np.array([1, 0, 0])
-
-        up = np.cross(right, forward)
-
-        if keys[pygame.K_w]:
-            self.position += forward * self.movement_speed
-        if keys[pygame.K_s]:
-            self.position -= forward * self.movement_speed
-        if keys[pygame.K_a]:
-            self.position += right * self.movement_speed
-        if keys[pygame.K_d]:
-            self.position -= right * self.movement_speed
-        if keys[pygame.K_SPACE]:
-            self.position += up * self.movement_speed
-        if keys[pygame.K_LSHIFT]:
-            self.position -= up * self.movement_speed
