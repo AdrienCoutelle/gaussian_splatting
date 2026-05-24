@@ -49,13 +49,14 @@ class InteractiveInputHandler:
 
         self.clock = pygame.time.Clock()
         self.frame_count = 0
+        self._cached_pose: torch.Tensor | None = None
 
         print(f"Initial pitch: {np.degrees(self.pitch):.1f}°, yaw: {np.degrees(self.yaw):.1f}°")
 
     def get_next_pose(
         self,
         compute_pose_fn: callable,
-    ) -> tuple[torch.Tensor, pygame.Surface]:
+    ) -> tuple[torch.Tensor, pygame.Surface, bool]:
         """
         Process input events and return the updated pose.
 
@@ -63,11 +64,12 @@ class InteractiveInputHandler:
             compute_pose_fn: Function that computes pose from position, look_at, and world_up
 
         Returns:
-            Tuple of (pose tensor, pygame surface to render to)
+            Tuple of (pose tensor, pygame surface to render to, pose changed flag)
 
         Raises:
             StopInferenceException: When the user wants to quit
         """
+        pose_changed = False
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 raise StopInferenceException("User closed the window")
@@ -75,25 +77,34 @@ class InteractiveInputHandler:
                 if event.key == pygame.K_ESCAPE:
                     raise StopInferenceException("User pressed ESC")
             elif event.type == pygame.MOUSEMOTION:
-                self._handle_mouse_movement(
-                    dx=event.rel[0],
-                    dy=event.rel[1],
+                pose_changed = (
+                    self._handle_mouse_movement(
+                        dx=event.rel[0],
+                        dy=event.rel[1],
+                    )
+                    or pose_changed
                 )
             elif event.type == pygame.MOUSEWHEEL:
-                self._handle_forward_movement(step=float(event.y))
+                pose_changed = self._handle_forward_movement(step=float(event.y)) or pose_changed
 
-        self._handle_keyboard_input()
-        self._update_look_at()
+        pose_changed = self._handle_keyboard_input() or pose_changed
 
-        pose = torch.from_numpy(
-            compute_pose_fn(
-                position=self.position,
-                look_at=self.look_at,
-                world_up=np.array([0, 0, 1]),
+        if pose_changed:
+            self._update_look_at()
+
+        if (
+            pose_changed
+            or self._cached_pose is None
+        ):  # fmt:skip
+            self._cached_pose = torch.from_numpy(
+                compute_pose_fn(
+                    position=self.position,
+                    look_at=self.look_at,
+                    world_up=np.array([0, 0, 1]),
+                )
             )
-        )
 
-        return pose, self.screen
+        return self._cached_pose, self.screen, pose_changed
 
     def update_display(self) -> None:
         """Update the display and tick the clock."""
@@ -113,12 +124,19 @@ class InteractiveInputHandler:
         self,
         dx: int,
         dy: int,
-    ) -> None:
+    ) -> bool:
+        if (
+            dx == 0
+            and dy == 0
+        ):  # fmt:skip
+            return False
+
         self.yaw -= dx * self.mouse_sensitivity
         self.pitch -= dy * self.mouse_sensitivity
 
         max_pitch = np.pi / 2 - 0.001
         self.pitch = np.clip(self.pitch, -max_pitch, max_pitch)
+        return True
 
     def _update_look_at(self) -> None:
         forward = np.array(
@@ -134,13 +152,18 @@ class InteractiveInputHandler:
     def _handle_forward_movement(
         self,
         step: float,
-    ) -> None:
+    ) -> bool:
+        if step == 0.0:
+            return False
+
         forward = self.look_at - self.position
         forward = forward / np.linalg.norm(forward)
         self.position += forward * self.movement_speed * step
+        return True
 
-    def _handle_keyboard_input(self) -> None:
+    def _handle_keyboard_input(self) -> bool:
         keys = pygame.key.get_pressed()
+        moved = False
 
         forward = self.look_at - self.position
         forward = forward / np.linalg.norm(forward)
@@ -156,16 +179,24 @@ class InteractiveInputHandler:
 
         if keys[pygame.K_f]:
             self.position += forward * self.movement_speed
+            moved = True
         if keys[pygame.K_b]:
             self.position -= forward * self.movement_speed
+            moved = True
         if keys[pygame.K_LEFT]:
             self.position -= right * self.movement_speed
+            moved = True
         if keys[pygame.K_RIGHT]:
             self.position += right * self.movement_speed
+            moved = True
         if keys[pygame.K_UP]:
             self.position += up * self.movement_speed
+            moved = True
         if keys[pygame.K_DOWN]:
             self.position -= up * self.movement_speed
+            moved = True
+
+        return moved
 
 
 @dataclass
@@ -245,18 +276,24 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
         )
 
     def run(self) -> None:
+        cached_surface: pygame.Surface | None = None
+
         try:
             with torch.no_grad():
                 while True:
-                    pose, screen = self.input_handler.get_next_pose(
+                    pose, screen, pose_changed = self.input_handler.get_next_pose(
                         compute_pose_fn=self._compute_pose_look_at,
                     )
 
-                    image_bgr = self._render_image(pose)
-                    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                    if (
+                        pose_changed
+                        or cached_surface is None
+                    ):  # fmt:skip
+                        image_bgr = self._render_image(pose)
+                        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                        cached_surface = pygame.surfarray.make_surface(image_rgb.swapaxes(0, 1))
 
-                    surface = pygame.surfarray.make_surface(image_rgb.swapaxes(0, 1))
-                    screen.blit(surface, (0, 0))
+                    screen.blit(cached_surface, (0, 0))
 
                     self.input_handler.update_display()
         except StopInferenceException as e:
