@@ -1,11 +1,11 @@
 import json
 import os
 import tempfile
-from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 
 import pycolmap
+from pydantic import BaseModel
 
 from gaussian_splatting.utils.logger import Logger
 
@@ -31,57 +31,12 @@ def suppress_output_wrapper(func):
     return wrapper
 
 
-@dataclass
-class ColmapConfig:
+class ColmapConfig(BaseModel):
     images_path: str
     output_folder: str
     poses_filename: str
     intrinsics_filename: str
     points_filename: str
-
-    @classmethod
-    def from_dict(
-        cls,
-        configuration: dict,
-    ) -> "ColmapConfig":
-        if not isinstance(configuration, dict):
-            raise ValueError(f"ColmapConfig must be a dictionary, got '{type(configuration).__name__}'.")
-
-        mandatory_fields = {
-            "images_path",
-            "output_folder",
-        }
-        if not set(configuration.keys()).issuperset(mandatory_fields):
-            missing_fields = mandatory_fields - set(configuration.keys())
-            raise ValueError(
-                f"ColmapConfig is missing the following mandatory fields: {', '.join(missing_fields)}, "
-                f"got {', '.join(configuration.keys())}."
-            )
-
-        images_path = configuration["images_path"]
-        output_folder = configuration["output_folder"]
-        poses_filename = configuration["poses_filename"]
-        intrinsics_filename = configuration["intrinsics_filename"]
-        points_filename = configuration["points_filename"]
-
-        if not isinstance(images_path, str):
-            raise ValueError(f"ColmapConfig 'images_path' must be a string, got '{images_path}'.")
-        if not isinstance(output_folder, str):
-            raise ValueError(f"ColmapConfig 'output_folder' must be a string, got '{output_folder}'.")
-        if not isinstance(poses_filename, str):
-            raise ValueError(f"ColmapConfig 'poses_filename' must be a string, got '{poses_filename}'.")
-        if not isinstance(intrinsics_filename, str):
-            raise ValueError(f"ColmapConfig 'intrinsics_filename' must be a string, got '{intrinsics_filename}'.")
-        if not isinstance(points_filename, str):
-            raise ValueError(f"ColmapConfig 'points_filename' must be a string, got '{points_filename}'.")
-
-        return ColmapConfig(
-            images_path=images_path,
-            output_folder=output_folder,
-            poses_filename=poses_filename,
-            intrinsics_filename=intrinsics_filename,
-            points_filename=points_filename,
-        )
 
 
 class ColmapRunner:

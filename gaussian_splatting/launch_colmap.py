@@ -16,7 +16,7 @@ def main(config_path: str) -> None:
     with open(config_path) as file:
         config_dict = yaml.safe_load(file)
 
-    config = ColmapConfig.from_dict(config_dict)
+    config = ColmapConfig(**config_dict)
     runner = ColmapRunner(config)
 
     runner.run()
