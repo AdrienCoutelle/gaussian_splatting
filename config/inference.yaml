@@ -1,17 +1,16 @@
 ply_file_path: datasets/fly.ply
 
-renderer:
+renderer_config:
   name: apple_silicon
-  parameters:
-    focal_length: 200
-    width: 600
-    height: 400
+  focal_length: 200
+  width: 600
+  height: 400
 
 inference_pipeline_config:
-  name: interactive
-  parameters:
-    initial_look_at: [0.0378, -0.0912, -0.0017]
-    initial_position: [0.4, -0.0912, -0.0017]
+  # name: interactive
+  # parameters:
+  #   initial_look_at: [0.0378, -0.0912, -0.0017]
+  #   initial_position: [0.4, -0.0912, -0.0017]
 
   # name: orbit
   # parameters:
@@ -26,10 +25,9 @@ inference_pipeline_config:
   #   max_phi: 180
   #   phi_freq: 0.5
 
-# inference_pipeline_config:
-#   name: position
-#   parameters:
-#     look_at: [0.0378, -0.0912, -0.0017]
-#     position: [0.0378, -0.0912, 0.3983]
+inference_pipeline_config:
+  name: single_image
+  look_at: [0.0378, -0.0912, -0.0017]
+  position: [0.0378, -0.0912, 0.3983]
 
 output_folder: output/fly_inference

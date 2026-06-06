@@ -1,12 +1,11 @@
 from abc import ABC
-from dataclasses import dataclass
 
 import numpy as np
 import torch
+from pydantic import BaseModel
 
 
-@dataclass
-class InferencePipelineParams:
+class InferencePipelineParams(BaseModel, ABC):
     pass
 
 

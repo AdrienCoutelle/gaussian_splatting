@@ -1,10 +1,11 @@
 import datetime
 import os
-from dataclasses import dataclass
+from typing import Annotated, Literal
 
 import cv2
 import numpy as np
 import torch
+from pydantic import ConfigDict, Field
 from tqdm import tqdm
 
 from gaussian_splatting.structures.camera import Camera
@@ -16,109 +17,26 @@ from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
 from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
 
 
-@dataclass
 class OrbitPipelineInferenceParams(InferencePipelineParams):
-    center: list[float]
+    name: Literal["orbit"]
+    model_config = ConfigDict(extra="forbid")
 
-    fps: int
-    n_frames: int
-    min_radius: float
-    max_radius: float
-    radius_freq: float
-    n_revolutions: int | float
+    center: tuple[float, float, float]
+
+    fps: Annotated[int, Field(gt=0)]
+    n_frames: Annotated[int, Field(gt=0)]
+
+    min_radius: Annotated[float, Field(gt=0)]
+    max_radius: Annotated[float, Field(gt=0)]
+
+    radius_freq: Annotated[float, Field(ge=0)]
+
+    n_revolutions: Annotated[float, Field(gt=0)]
+
     min_phi: float
     max_phi: float
-    phi_freq: float
 
-    @staticmethod
-    def from_dict(configuration: dict) -> "OrbitPipelineInferenceParams":
-        if not isinstance(configuration, dict):
-            raise ValueError(
-                f"OrbitPipelineInferenceParams must be a dictionary, got '{type(configuration).__name__}'."
-            )
-
-        mandatory_fields = {
-            "center",
-            "fps",
-            "n_frames",
-            "min_radius",
-            "max_radius",
-            "radius_freq",
-            "n_revolutions",
-            "min_phi",
-            "max_phi",
-            "phi_freq",
-        }
-
-        if not set(configuration.keys()).issuperset(mandatory_fields):
-            missing_fields = mandatory_fields - set(configuration.keys())
-            raise ValueError(
-                f"OrbitPipelineInferenceParams is missing the following mandatory fields: {', '.join(missing_fields)}, "
-                f"got {', '.join(configuration.keys())}."
-            )
-
-        center = configuration["center"]
-        if not isinstance(center, list) or len(center) != 3 or not all(isinstance(c, (int, float)) for c in center):
-            raise ValueError(f"OrbitPipelineInferenceParams 'center' must be a list of three numbers, got '{center}'.")
-
-        fps = configuration["fps"]
-        if not isinstance(fps, int) or fps <= 0:
-            raise ValueError(f"OrbitPipelineInferenceParams 'fps' must be a positive integer, got '{fps}'.")
-
-        n_frames = configuration["n_frames"]
-        if not isinstance(n_frames, int) or n_frames <= 0:
-            raise ValueError(f"OrbitPipelineInferenceParams 'n_frames' must be a positive integer, got '{n_frames}'.")
-
-        min_radius = configuration["min_radius"]
-        if not isinstance(min_radius, (int, float)) or min_radius <= 0:
-            raise ValueError(
-                f"OrbitPipelineInferenceParams 'min_radius' must be a positive number, got '{min_radius}'."
-            )
-
-        max_radius = configuration["max_radius"]
-        if not isinstance(max_radius, (int, float)) or max_radius <= 0:
-            raise ValueError(
-                f"OrbitPipelineInferenceParams 'max_radius' must be a positive number, got '{max_radius}'."
-            )
-
-        radius_freq = configuration["radius_freq"]
-        if not isinstance(radius_freq, (int, float)) or radius_freq < 0:
-            raise ValueError(
-                f"OrbitPipelineInferenceParams 'radius_freq' must be a non-negative number, got '{radius_freq}'."
-            )
-
-        n_revolutions = configuration["n_revolutions"]
-        if not isinstance(n_revolutions, (int, float)) or n_revolutions <= 0:
-            raise ValueError(
-                f"OrbitPipelineInferenceParams 'n_revolutions' must be a positive number, got '{n_revolutions}'."
-            )
-
-        min_phi = configuration["min_phi"]
-        if not isinstance(min_phi, (int, float)):
-            raise ValueError(f"OrbitPipelineInferenceParams 'min_phi' must be a number, got '{min_phi}'.")
-
-        max_phi = configuration["max_phi"]
-        if not isinstance(max_phi, (int, float)):
-            raise ValueError(f"OrbitPipelineInferenceParams 'max_phi' must be a number, got '{max_phi}'.")
-
-        phi_freq = configuration["phi_freq"]
-        if not isinstance(phi_freq, (int, float)) or phi_freq < 0:
-            raise ValueError(
-                f"OrbitPipelineInferenceParams 'phi_freq' must be a non-negative number, got '{phi_freq}'."
-            )
-
-        return OrbitPipelineInferenceParams(
-            center=center,
-            fps=fps,
-            n_frames=n_frames,
-            min_radius=min_radius,
-            max_radius=max_radius,
-            radius_freq=radius_freq,
-            n_revolutions=n_revolutions,
-            min_phi=min_phi,
-            max_phi=max_phi,
-            phi_freq=phi_freq,
-        )
+    phi_freq: Annotated[float, Field(ge=0)]
 
 
 class OrbitVideoInferencePipeline(BaseInferencePipeline):
