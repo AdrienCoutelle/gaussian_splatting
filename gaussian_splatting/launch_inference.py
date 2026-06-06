@@ -16,7 +16,7 @@ def main(config_path: str):
     with open(config_path) as f:
         config_dict = yaml.safe_load(f)
 
-    config: InferenceConfig = InferenceConfig.from_dict(config_dict)
+    config = InferenceConfig(**config_dict)
     launcher = InferenceLauncher(config)
 
     launcher.run()

@@ -1,62 +1,27 @@
-from dataclasses import dataclass
+from typing import Literal
 
 import torch
+from pydantic import ConfigDict
 from tqdm import tqdm
 
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, ScreenSpaceGaussians
+from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, RendererParams, ScreenSpaceGaussians
 from gaussian_splatting.utils.profiler import profile
 
 
-@dataclass
-class NaiveRendererParams:
+class NaiveRendererParams(RendererParams):
+    name: Literal["naive"]
+
+    model_config = ConfigDict(extra="forbid")
+
     width: int
     height: int
     focal_length: float
+
     near_plane: float = 1e-4
     covariance_regularization: float = 0.3
     gaussian_extent: float = 3.0
     tile_size: int = 16
     max_gaussians_per_batch: int = 1024
-
-    @classmethod
-    def from_dict(
-        cls,
-        config_dict: dict,
-    ) -> "NaiveRendererParams":
-        if not isinstance(config_dict, dict):
-            raise ValueError(f"NaiveRendererParams must be a dictionary, got '{type(config_dict).__name__}'.")
-
-        mandatory_fields = {
-            "width",
-            "height",
-            "focal_length",
-        }
-        if not set(config_dict.keys()).issuperset(mandatory_fields):
-            missing_fields = mandatory_fields - set(config_dict.keys())
-            raise ValueError(
-                f"NaiveRendererParams is missing the following mandatory fields: {', '.join(missing_fields)}, "
-                f"got {', '.join(config_dict.keys())}."
-            )
-
-        width = config_dict["width"]
-        height = config_dict["height"]
-        focal_length = config_dict["focal_length"]
-        near_plane = config_dict.get("near_plane", 1e-4)
-        covariance_regularization = config_dict.get("covariance_regularization", 0.3)
-        gaussian_extent = config_dict.get("gaussian_extent", 3.0)
-        tile_size = config_dict.get("tile_size", 32)
-        max_gaussians_per_batch = config_dict.get("max_gaussians_per_batch", 512)
-
-        return NaiveRendererParams(
-            width=width,
-            height=height,
-            focal_length=focal_length,
-            near_plane=near_plane,
-            covariance_regularization=covariance_regularization,
-            gaussian_extent=gaussian_extent,
-            tile_size=tile_size,
-            max_gaussians_per_batch=max_gaussians_per_batch,
-        )
 
 
 @profile

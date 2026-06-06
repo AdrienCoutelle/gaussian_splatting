@@ -1,20 +1,24 @@
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import mlx.core as mx
 import numpy as np
 import torch
+from pydantic import ConfigDict
 
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, ScreenSpaceGaussians
+from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, RendererParams, ScreenSpaceGaussians
 from gaussian_splatting.utils.profiler import profile
 
 
-@dataclass
-class AppleSiliconRendererParams:
+class AppleSiliconRendererParams(RendererParams):
+    name: Literal["apple_silicon"]
+    model_config = ConfigDict(extra="forbid")
+
     width: int
     height: int
     focal_length: float
+
     near_plane: float = 1e-4
     covariance_regularization: float = 0.3
     tile_size: tuple[int, int] = (16, 16)
@@ -22,39 +26,6 @@ class AppleSiliconRendererParams:
     sigma_cut: float = 12.0
     eps: float = 1e-3
     verbose: bool = False
-
-    @classmethod
-    def from_dict(
-        cls,
-        config_dict: dict,
-    ) -> "AppleSiliconRendererParams":
-        if not isinstance(config_dict, dict):
-            raise ValueError(f"AppleSiliconRendererParams must be a dictionary, got '{type(config_dict).__name__}'.")
-
-        mandatory_fields = {
-            "width",
-            "height",
-            "focal_length",
-        }
-        if not set(config_dict.keys()).issuperset(mandatory_fields):
-            missing_fields = mandatory_fields - set(config_dict.keys())
-            raise ValueError(
-                f"AppleSiliconRendererParams is missing the following mandatory fields: {', '.join(missing_fields)}, "
-                f"got {', '.join(config_dict.keys())}."
-            )
-
-        return AppleSiliconRendererParams(
-            width=config_dict["width"],
-            height=config_dict["height"],
-            focal_length=config_dict["focal_length"],
-            near_plane=config_dict.get("near_plane", 1e-4),
-            covariance_regularization=config_dict.get("covariance_regularization", 0.3),
-            tile_size=tuple(config_dict.get("tile_size", (16, 16))),
-            max_gaussians_per_tile=config_dict.get("max_gaussians_per_tile", 4000),
-            sigma_cut=config_dict.get("sigma_cut", 12.0),
-            eps=config_dict.get("eps", 1e-3),
-            verbose=config_dict.get("verbose", False),
-        )
 
 
 @profile
