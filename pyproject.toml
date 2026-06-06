@@ -19,11 +19,7 @@ dependencies = [
   "pyyaml",
   "pycolmap",
   "pygame",
-]
-
-[project.optional-dependencies]
-tests = [
-    "pytest",
+  "pydantic",
 ]
 
 [project.scripts]
