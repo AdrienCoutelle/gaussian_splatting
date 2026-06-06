@@ -1,10 +1,11 @@
 import datetime
 import os
-from dataclasses import dataclass
+from typing import Literal
 
 import cv2
 import numpy as np
 import torch
+from pydantic import ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian
@@ -15,50 +16,12 @@ from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
 from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
 
 
-@dataclass
 class SingleImageInferencePipelineParams(InferencePipelineParams):
-    look_at: list[float]
-    position: list[float]
+    name: Literal["single_image"]
+    model_config = ConfigDict(extra="forbid")
 
-    @staticmethod
-    def from_dict(configuration: dict) -> "SingleImageInferencePipelineParams":
-        if not isinstance(configuration, dict):
-            raise ValueError(
-                f"SingleImageInferencePipelineParams must be a dictionary, got '{type(configuration).__name__}'."
-            )
-
-        mandatory_fields = {
-            "look_at",
-            "position",
-        }
-
-        if not set(configuration.keys()).issuperset(mandatory_fields):
-            missing_fields = mandatory_fields - set(configuration.keys())
-            raise ValueError(
-                f"SingleImageInferencePipelineParams is missing the following mandatory fields: {missing_fields}, "
-                f"got {set(configuration.keys())}."
-            )
-
-        look_at = configuration["look_at"]
-        if not isinstance(look_at, list) or len(look_at) != 3 or not all(isinstance(c, (int, float)) for c in look_at):
-            raise ValueError(
-                f"SingleImageInferencePipelineParams 'look_at' must be a list of three numbers, got '{look_at}'."
-            )
-
-        position = configuration["position"]
-        if (
-            not isinstance(position, list)
-            or len(position) != 3
-            or not all(isinstance(c, (int, float)) for c in position)
-        ):
-            raise ValueError(
-                f"SingleImageInferencePipelineParams 'position' must be a list of three numbers, got '{position}'."
-            )
-
-        return SingleImageInferencePipelineParams(
-            look_at=look_at,
-            position=position,
-        )
+    look_at: tuple[float, float, float]
+    position: tuple[float, float, float]
 
 
 class SingleImageInferencePipeline(BaseInferencePipeline):

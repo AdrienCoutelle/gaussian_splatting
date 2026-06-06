@@ -1,9 +1,10 @@
-from dataclasses import dataclass
+from typing import Literal
 
 import cv2
 import numpy as np
 import pygame
 import torch
+from pydantic import ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian
@@ -199,52 +200,12 @@ class InteractiveInputHandler:
         return moved
 
 
-@dataclass
 class InteractiveInferencePipelineParams(InferencePipelineParams):
-    initial_look_at: list[float]
-    initial_position: list[float]
+    name: Literal["interactive"]
+    model_config = ConfigDict(extra="forbid")
 
-    @staticmethod
-    def from_dict(configuration: dict) -> "InteractiveInferencePipelineParams":
-        if not isinstance(configuration, dict):
-            raise ValueError(
-                f"InteractiveInferencePipelineParams must be a dictionary, got '{type(configuration).__name__}'."
-            )
-
-        mandatory_fields = {
-            "initial_look_at",
-            "initial_position",
-        }
-
-        if not set(configuration.keys()).issuperset(mandatory_fields):
-            missing_fields = mandatory_fields - set(configuration.keys())
-            raise ValueError(
-                f"InteractiveInferencePipelineParams is missing the following mandatory fields: {missing_fields}, "
-                f"got {set(configuration.keys())}."
-            )
-
-        look_at = configuration["initial_look_at"]
-        if not isinstance(look_at, list) or len(look_at) != 3 or not all(isinstance(c, (int, float)) for c in look_at):
-            raise ValueError(
-                f"InteractiveInferencePipelineParams 'initial_look_at' "
-                f"must be a list of three numbers, got '{look_at}'."
-            )
-
-        position = configuration["initial_position"]
-        if (
-            not isinstance(position, list)
-            or len(position) != 3
-            or not all(isinstance(c, (int, float)) for c in position)
-        ):
-            raise ValueError(
-                f"InteractiveInferencePipelineParams 'initial_position' "
-                f"must be a list of three numbers, got '{position}'."
-            )
-
-        return InteractiveInferencePipelineParams(
-            initial_look_at=look_at,
-            initial_position=position,
-        )
+    look_at: tuple[float, float, float]
+    position: tuple[float, float, float]
 
 
 class InteractiveInferencePipeline(BaseInferencePipeline):

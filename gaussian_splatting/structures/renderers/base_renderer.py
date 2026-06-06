@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from pydantic import BaseModel
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
@@ -31,8 +32,7 @@ class ScreenSpaceGaussians:
     opacities: torch.Tensor
 
 
-@dataclass
-class RendererParams:
+class RendererParams(BaseModel, ABC):
     pass
 
 
