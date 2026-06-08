@@ -1,0 +1,25 @@
+points_ply_path: output/colmap/lego/points3D.ply
+training_images_path: datasets/lego/train
+poses_json_path: output/colmap/lego/poses.json
+intrinsics_json_path: output/colmap/lego/intrinsics.json
+
+renderer:
+  name: naive
+  parameters:
+    focal_length: 800
+    width: 400
+    height: 400
+    near_plane: 0.01
+    covariance_regularization: 0.3
+    gaussian_extent: 3.0
+    tile_size: 16
+    max_gaussians_per_batch: 512
+
+training:
+  max_steps: 2000
+  learning_rate: 0.003
+  log_every_n_steps: 10
+  preview_every_n_steps: 100
+  checkpoint_every_n_steps: 500
+
+output_folder: output/training/lego
