@@ -1,8 +1,9 @@
+import numpy as np
+import torch
 from plyfile import PlyData
 
 from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.utils.logger import Logger
-from gaussian_splatting.utils.ply_loader import load_ply_gaussians
 
 logger = Logger("PLY_HANDLER")
 
@@ -12,10 +13,53 @@ class PLYHandler:
         self,
         file_path: str,
     ):
-        self.data = PlyData.read(file_path)
+        ply_data = PlyData.read(file_path)
 
-    def get_gaussians(self) -> GaussianCollection:
-        return load_ply_gaussians(self.data)
+        self.data = ply_data["vertex"]
+        self.properties_names = [
+            prop.name
+            for prop in self.data.properties
+        ]  # fmt:skip
 
     def log_info(self) -> None:
-        logger.info(f"PLY file info:\n{self.data}")
+        logger.info(
+            "PLY file info:\n"
+            f"  Properties: {', '.join(self.properties_names)}\n"
+            f"  Number of gaussians: {len(self.data)}",
+        )  # fmt:skip
+
+    def get_gaussians(self) -> GaussianCollection:
+        return GaussianCollection.from_tensors(
+            means=self._get_means(),
+            covariances=torch.eye(3).unsqueeze(0).repeat(len(self._get_means()), 1, 1) / 1000,
+            colors=self._get_colors(),
+            opacities=self._get_opacities(),
+        )
+
+    def _get_means(self) -> torch.Tensor:
+        positions = np.stack([
+            self.data["x"],
+            self.data["y"],
+            self.data["z"],
+        ], axis=1)  # fmt:skip
+
+        return torch.from_numpy(positions).float()
+
+    def _get_colors(self) -> torch.Tensor:
+        colors_rgb = np.stack(
+            [
+                self.data["red"],
+                self.data["green"],
+                self.data["blue"],
+            ],
+            axis=1
+        ).astype(np.float32) / 255.0  # fmt:skip
+
+        return torch.from_numpy(colors_rgb).float()
+
+    def _get_opacities(self) -> torch.Tensor:
+        if "opacity" not in self.properties_names:
+            return torch.ones((len(self.data), 1), dtype=torch.float32)
+
+        opacities = self.data["opacity"].astype(np.float32)
+        return torch.from_numpy(opacities).float().unsqueeze(1)
