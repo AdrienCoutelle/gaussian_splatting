@@ -29,9 +29,16 @@ class PLYHandler:
         )  # fmt:skip
 
     def get_gaussians(self) -> GaussianCollection:
+        means = self._get_means()
+        n = len(means)
+        # Identity quaternion [w=1, x=0, y=0, z=0] with small isotropic scale
+        quaternions = torch.zeros((n, 4), dtype=torch.float32)
+        quaternions[:, 0] = 1.0
+        scales = torch.full((n, 3), fill_value=1e-3, dtype=torch.float32)
         return GaussianCollection.from_tensors(
-            means=self._get_means(),
-            covariances=torch.eye(3).unsqueeze(0).repeat(len(self._get_means()), 1, 1) / 1000,
+            means=means,
+            quaternions=quaternions,
+            scales=scales,
             colors=self._get_colors(),
             opacities=self._get_opacities(),
         )

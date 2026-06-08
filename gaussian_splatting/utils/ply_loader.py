@@ -6,18 +6,50 @@ from gaussian_splatting.structures.gaussian import GaussianCollection
 
 
 def load_ply_gaussians(ply_path: str) -> GaussianCollection:
-    """
-    Load Gaussian splatting data from a PLY file.
-
-    The PLY file contains:
-    - Position (x, y, z)
-    - Spherical harmonics (f_dc_0-2 for DC, f_rest_0-44 for higher orders)
-    - Opacity
-    - Scale (scale_0-2)
-    - Rotation quaternion (rot_0-3)
-    """
     ply_data = PlyData.read(ply_path)
     vertices = ply_data["vertex"]
+    property_names = {property_.name for property_ in vertices.properties}
+
+    full_gaussian_properties = {
+        "x",
+        "y",
+        "z",
+        "f_dc_0",
+        "f_dc_1",
+        "f_dc_2",
+        "scale_0",
+        "scale_1",
+        "scale_2",
+        "rot_0",
+        "rot_1",
+        "rot_2",
+        "rot_3",
+        "opacity",
+    }
+    colmap_properties = {
+        "x",
+        "y",
+        "z",
+        "red",
+        "green",
+        "blue",
+    }
+
+    if property_names.issuperset(full_gaussian_properties):
+        return _load_full_gaussian_ply(vertices=vertices)
+
+    if property_names.issuperset(colmap_properties):
+        return _load_colmap_point_cloud_ply(vertices=vertices)
+
+    raise ValueError(
+        f"Unsupported PLY schema for '{ply_path}'. "
+        "Expected either full Gaussian Splatting properties "
+        "(f_dc_*, scale_*, rot_*, opacity) or COLMAP properties (x,y,z,red,green,blue)."
+    )
+
+
+def _load_full_gaussian_ply(vertices) -> GaussianCollection:
+    """Load a PLY file that already contains Gaussian Splatting attributes."""
 
     # Extract positions
     positions = np.stack([
@@ -70,12 +102,6 @@ def load_ply_gaussians(ply_path: str) -> GaussianCollection:
     opacities_logit = torch.from_numpy(opacities).float()
     opacities_tensor = torch.sigmoid(opacities_logit).unsqueeze(1)
 
-    # Compute covariance matrices from scale and rotation
-    covariances = compute_covariance_from_scale_rotation(
-        scale=scales_tensor,
-        rotation=rotations_tensor,
-    )
-
     # Compute and print statistics
     mean_position = means.mean(dim=0)
     distances_from_center = torch.norm(means - mean_position, dim=1)
@@ -114,10 +140,97 @@ def load_ply_gaussians(ply_path: str) -> GaussianCollection:
 
     return GaussianCollection.from_tensors(
         means=means,
-        covariances=covariances,
+        quaternions=rotations_tensor,
+        scales=scales_tensor,
         colors=colors,
         opacities=opacities_tensor,
     )
+
+
+def _load_colmap_point_cloud_ply(vertices) -> GaussianCollection:
+    """Load a COLMAP point-cloud PLY and synthesize Gaussian attributes."""
+    positions = np.stack([
+        vertices["x"],
+        vertices["y"],
+        vertices["z"],
+    ], axis=1)  # fmt:skip
+
+    colors_rgb = np.stack([
+        vertices["red"],
+        vertices["green"],
+        vertices["blue"],
+    ], axis=1).astype(np.float32) / 255.0  # fmt:skip
+
+    means = torch.from_numpy(positions).float()
+    colors = torch.from_numpy(colors_rgb).float()
+
+    sigma = _estimate_colmap_sigmas(
+        means=means,
+        vertices=vertices,
+    )
+    # Isotropic scale: same sigma in all 3 directions
+    scales = sigma.unsqueeze(1).repeat(1, 3)  # (N, 3)
+    # Identity rotation quaternion [w=1, x=0, y=0, z=0]
+    n_points = means.shape[0]
+    quaternions = torch.zeros((n_points, 4), dtype=torch.float32)
+    quaternions[:, 0] = 1.0
+
+    opacities = _estimate_colmap_opacities(vertices=vertices).unsqueeze(1)
+
+    return GaussianCollection.from_tensors(
+        means=means,
+        quaternions=quaternions,
+        scales=scales,
+        colors=colors,
+        opacities=opacities,
+    )
+
+
+def _estimate_colmap_sigmas(
+    means: torch.Tensor,
+    vertices,
+) -> torch.Tensor:
+    min_corner = means.min(dim=0).values
+    max_corner = means.max(dim=0).values
+    scene_extent = torch.norm(max_corner - min_corner)
+    n_points = max(int(means.shape[0]), 1)
+
+    base_sigma = torch.clamp(scene_extent / np.sqrt(float(n_points)), min=1e-4)
+    sigma = torch.full((n_points,), fill_value=base_sigma, dtype=torch.float32)
+
+    vertex_properties = {property_.name for property_ in vertices.properties}
+    if "track_length" in vertex_properties:
+        track_length = torch.from_numpy(np.asarray(vertices["track_length"])).float()
+        median_track = torch.clamp(track_length.median(), min=1.0)
+        confidence = torch.clamp(track_length / median_track, min=0.5, max=2.0)
+        sigma = sigma / torch.sqrt(confidence)
+
+    if "reprojection_error" in vertex_properties:
+        reprojection_error = torch.from_numpy(np.asarray(vertices["reprojection_error"])).float()
+        median_error = torch.clamp(reprojection_error.median(), min=1e-3)
+        error_ratio = torch.clamp(reprojection_error / median_error, min=0.5, max=2.0)
+        sigma = sigma * torch.sqrt(error_ratio)
+
+    return torch.clamp(sigma, min=1e-4)
+
+
+def _estimate_colmap_opacities(vertices) -> torch.Tensor:
+    n_points = len(vertices["x"])
+    quality = torch.ones((n_points,), dtype=torch.float32)
+
+    vertex_properties = {property_.name for property_ in vertices.properties}
+    if "track_length" in vertex_properties:
+        track_length = torch.from_numpy(np.asarray(vertices["track_length"])).float()
+        max_track_length = torch.clamp(track_length.max(), min=1.0)
+        quality = quality * torch.clamp(track_length / max_track_length, min=0.1, max=1.0)
+
+    if "reprojection_error" in vertex_properties:
+        reprojection_error = torch.from_numpy(np.asarray(vertices["reprojection_error"])).float()
+        median_error = torch.clamp(reprojection_error.median(), min=1e-3)
+        error_quality = median_error / (median_error + reprojection_error)
+        quality = quality * torch.clamp(error_quality, min=0.1, max=1.0)
+
+    return torch.clamp(0.15 + 0.85 * quality, min=0.05, max=0.98)
 
 
 def compute_covariance_from_scale_rotation(

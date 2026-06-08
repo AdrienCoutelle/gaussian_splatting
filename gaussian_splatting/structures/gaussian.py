@@ -6,7 +6,8 @@ import torch
 @dataclass
 class Gaussian:
     mean: torch.Tensor
-    covariance: torch.Tensor
+    quaternion: torch.Tensor  # (4,) as [w, x, y, z]
+    scale: torch.Tensor  # (3,)
     color: torch.Tensor
     opacity: torch.Tensor
 
@@ -17,7 +18,8 @@ class GaussianCollection:
         gaussians: list[Gaussian],
     ) -> None:
         self.means = torch.stack([g.mean for g in gaussians])
-        self.covariances = torch.stack([g.covariance for g in gaussians])
+        self.quaternions = torch.stack([g.quaternion for g in gaussians])
+        self.scales = torch.stack([g.scale for g in gaussians])
         self.colors = torch.stack([g.color for g in gaussians])
         self.opacities = torch.stack([g.opacity for g in gaussians])
 
@@ -25,28 +27,27 @@ class GaussianCollection:
     def from_tensors(
         cls,
         means: torch.Tensor,
-        covariances: torch.Tensor,
+        quaternions: torch.Tensor,
+        scales: torch.Tensor,
         colors: torch.Tensor,
         opacities: torch.Tensor,
     ) -> "GaussianCollection":
         collection = cls.__new__(cls)
         collection.means = means
-        collection.covariances = covariances
+        collection.quaternions = quaternions
+        collection.scales = scales
         collection.colors = colors
         collection.opacities = opacities
 
         return collection
-
-    @property
-    def opacites(self) -> torch.Tensor:
-        return self.opacities
 
     def to_list(self) -> list[Gaussian]:
         """Convert the collection back to a list of individual Gaussians."""
         return [
             Gaussian(
                 mean=self.means[i],
-                covariance=self.covariances[i],
+                quaternion=self.quaternions[i],
+                scale=self.scales[i],
                 color=self.colors[i],
                 opacity=self.opacities[i],
             )

@@ -10,6 +10,27 @@ from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
 from gaussian_splatting.utils.profiler import profile
 
 
+def _quaternions_to_rotation_matrices(quaternions: torch.Tensor) -> torch.Tensor:
+    """Convert (N, 4) quaternions [w, x, y, z] to (N, 3, 3) rotation matrices."""
+    quaternions = quaternions / torch.norm(quaternions, dim=1, keepdim=True).clamp(min=1e-12)
+    w, x, y, z = quaternions[:, 0], quaternions[:, 1], quaternions[:, 2], quaternions[:, 3]
+
+    return torch.stack(
+        [
+            1 - 2 * (y**2 + z**2),
+            2 * (x * y - w * z),
+            2 * (x * z + w * y),
+            2 * (x * y + w * z),
+            1 - 2 * (x**2 + z**2),
+            2 * (y * z - w * x),
+            2 * (x * z - w * y),
+            2 * (y * z + w * x),
+            1 - 2 * (x**2 + y**2),
+        ],
+        dim=1,
+    ).reshape(-1, 3, 3)
+
+
 @dataclass
 class Image:
     array: np.ndarray
@@ -97,21 +118,16 @@ class BaseRenderer(ABC):
         camera_position = camera.pose[:3, 3].to(device=self.device, dtype=torch.float32)
 
         means = gaussians.means.to(device=self.device, dtype=torch.float32)
-        covariances = gaussians.covariances.to(device=self.device, dtype=torch.float32)
         colors = gaussians.colors.to(device=self.device, dtype=torch.float32)
         opacities = gaussians.opacities.to(device=self.device, dtype=torch.float32)
 
         # Transform all means at once: p_camera = R^T @ (p_world - t)
-        # means: (N, 3), camera_position: (3,) -> (N, 3)
         camera_means = (means - camera_position) @ world_to_camera.T
-
-        # Transform all covariances at once: R^T @ Σ @ R
-        # covariances: (N, 3, 3), world_to_camera: (3, 3)
-        camera_covariances = world_to_camera @ covariances @ world_to_camera.T
 
         return GaussianCollection.from_tensors(
             means=camera_means,
-            covariances=camera_covariances,
+            quaternions=gaussians.quaternions.to(device=self.device, dtype=torch.float32),
+            scales=gaussians.scales.to(device=self.device, dtype=torch.float32),
             colors=colors,
             opacities=opacities,
         )
@@ -137,7 +153,8 @@ class BaseRenderer(ABC):
 
         # Filter all tensors
         valid_means = camera_means[valid_indices]
-        valid_covariances = gaussians.covariances[valid_indices]
+        valid_quaternions = gaussians.quaternions[valid_indices]
+        valid_scales = gaussians.scales[valid_indices]
         valid_colors = gaussians.colors[valid_indices]
         valid_opacities = gaussians.opacities[valid_indices]
         valid_depths = depths[valid_indices]
@@ -159,9 +176,18 @@ class BaseRenderer(ABC):
         jacobians[:, 1, 1] = -camera.f / valid_depths
         jacobians[:, 1, 2] = -camera.f * valid_means[:, 1] / (valid_depths**2)
 
-        # Compute 2D covariances: J @ Σ @ J^T for all gaussians
-        # jacobians: (N, 2, 3), valid_covariances: (N, 3, 3)
-        covariances_2d = torch.bmm(torch.bmm(jacobians, valid_covariances), jacobians.transpose(1, 2))
+        # Compute 3D world-space covariance from quaternion and scale: R @ S^2 @ R^T
+        R = _quaternions_to_rotation_matrices(valid_quaternions)  # (N, 3, 3)
+        S_squared = torch.diag_embed(valid_scales.square())  # (N, 3, 3)
+        world_covariances = R @ S_squared @ R.transpose(1, 2)  # (N, 3, 3)
+
+        # Transform to camera space: W_rot @ Σ_world @ W_rot^T
+        # world_to_camera is (3, 3) and broadcasts over the batch dimension
+        world_to_camera_rot = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32).transpose(0, 1)
+        camera_covariances = world_to_camera_rot @ world_covariances @ world_to_camera_rot.T  # (N, 3, 3)
+
+        # Compute 2D covariances: J @ Σ_cam @ J^T for all gaussians
+        covariances_2d = torch.bmm(torch.bmm(jacobians, camera_covariances), jacobians.transpose(1, 2))
 
         # Add regularization
         # regularization = torch.eye(2, device=self.device, dtype=torch.float32) * self.config.covariance_regularization
