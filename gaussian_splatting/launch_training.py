@@ -16,7 +16,7 @@ def main(config_path: str) -> None:
     config = TrainingConfig(**config_dict)
     launcher = TrainingLauncher(config)
 
-    launcher.run()
+    # launcher.run()
 
 
 if __name__ == "__main__":
