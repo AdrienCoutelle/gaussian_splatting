@@ -5,7 +5,7 @@ import torch
 
 @dataclass
 class Gaussian:
-    mean: torch.Tensor
+    position: torch.Tensor
     quaternion: torch.Tensor  # (4,) as [w, x, y, z]
     scale: torch.Tensor  # (3,)
     sh_coeffs: torch.Tensor  # (num_sh_coeffs, 3) where num_sh_coeffs = (sh_degree + 1)^2
@@ -17,7 +17,7 @@ class GaussianCollection:
         self,
         gaussians: list[Gaussian],
     ) -> None:
-        self.means = torch.stack([g.mean for g in gaussians])
+        self.positions = torch.stack([g.position for g in gaussians])
         self.quaternions = torch.stack([g.quaternion for g in gaussians])
         self.scales = torch.stack([g.scale for g in gaussians])
         self.sh_coeffs = torch.stack([g.sh_coeffs for g in gaussians])
@@ -26,14 +26,14 @@ class GaussianCollection:
     @classmethod
     def from_tensors(
         cls,
-        means: torch.Tensor,
+        positions: torch.Tensor,
         quaternions: torch.Tensor,
         scales: torch.Tensor,
         sh_coeffs: torch.Tensor,
         opacities: torch.Tensor,
     ) -> "GaussianCollection":
         collection = cls.__new__(cls)
-        collection.means = means
+        collection.positions = positions
         collection.quaternions = quaternions
         collection.scales = scales
         collection.sh_coeffs = sh_coeffs
@@ -45,7 +45,7 @@ class GaussianCollection:
         """Convert the collection back to a list of individual Gaussians."""
         return [
             Gaussian(
-                mean=self.means[i],
+                position=self.positions[i],
                 quaternion=self.quaternions[i],
                 scale=self.scales[i],
                 sh_coeffs=self.sh_coeffs[i],
@@ -55,4 +55,4 @@ class GaussianCollection:
         ]  # fmt:skip
 
     def __len__(self) -> int:
-        return int(self.means.shape[0])
+        return int(self.positions.shape[0])

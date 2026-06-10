@@ -4,10 +4,14 @@ import tempfile
 from functools import wraps
 from pathlib import Path
 
+import numpy as np
 import pycolmap
+import torch
 from pydantic import BaseModel
 
+from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.utils.logger import Logger
+from gaussian_splatting.utils.ply.ply_saver import PLYSaver
 
 logger = Logger("COLMAP")
 
@@ -98,7 +102,11 @@ class ColmapRunner:
 
         self._save_intrinsics_json()
 
-        self._save_points_ply()
+        gaussian_collection = self._create_gaussian_collection()
+
+        ply_output_path = self.output_folder / self.configuration.points_filename
+        ply_saver = PLYSaver(ply_output_path)
+        ply_saver.save_gaussians(gaussian_collection)
 
     @suppress_output_wrapper
     def _run_feature_extraction(self) -> None:
@@ -248,43 +256,50 @@ class ColmapRunner:
 
         return images
 
-    def _save_points_ply(self) -> None:
-        output_path = self.output_folder / self.configuration.points_filename
+    def _create_gaussian_collection(self) -> GaussianCollection:
         points3d_path = self.text_model_path / "points3D.txt"
         if not points3d_path.exists():
-            logger.warning(f"No points3D.txt found at {points3d_path}, skipping PLY export")
-            return
+            raise FileNotFoundError(f"No points3D.txt found at {points3d_path}")
 
-        points = []
+        positions = []
+        colors_uint8 = []
         with open(points3d_path) as file:
             for line in file:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-
                 parts = line.split()
-                x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
-                r, g, b = int(parts[4]), int(parts[5]), int(parts[6])
+                positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
+                colors_uint8.append([int(parts[4]), int(parts[5]), int(parts[6])])
 
-                points.append((x, y, z, r, g, b))
+        if len(positions) == 0:
+            raise ValueError("No 3D points found in points3D.txt")
 
-        if len(points) == 0:
-            logger.warning("No 3D points found in points3D.txt")
-            return
+        positions = torch.tensor(positions, dtype=torch.float32)
+        colors_rgb = torch.tensor(colors_uint8, dtype=torch.float32) / 255.0
 
-        with open(output_path, "w") as file:
-            file.write("ply\n")
-            file.write("format ascii 1.0\n")
-            file.write(f"element vertex {len(points)}\n")
-            file.write("property float x\n")
-            file.write("property float y\n")
-            file.write("property float z\n")
-            file.write("property uchar red\n")
-            file.write("property uchar green\n")
-            file.write("property uchar blue\n")
-            file.write("end_header\n")
+        C0 = 1 / (2 * np.sqrt(np.pi))
+        sh_dc = (colors_rgb - 0.5) / C0
+        sh_coeffs = sh_dc.unsqueeze(1)
 
-            for x, y, z, r, g, b in points:
-                file.write(f"{x} {y} {z} {r} {g} {b}\n")
+        n_points = positions.shape[0]
+        scene_extent = torch.norm(positions.max(dim=0).values - positions.min(dim=0).values)
+        base_sigma = torch.clamp(scene_extent / np.sqrt(float(n_points)), min=1e-4)
+        scales = base_sigma.expand(n_points, 1).repeat(1, 3)
 
-        logger.info(f"Saved 3D points to {output_path}")
+        quaternions = torch.zeros((n_points, 4), dtype=torch.float32)
+        quaternions[:, 0] = 1.0
+
+        opacities = torch.full(
+            (n_points, 1),
+            fill_value=1,
+            dtype=torch.float32,
+        )
+
+        return GaussianCollection.from_tensors(
+            positions=positions,
+            quaternions=quaternions,
+            scales=scales,
+            sh_coeffs=sh_coeffs,
+            opacities=opacities,
+        )

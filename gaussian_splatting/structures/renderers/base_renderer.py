@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import math
 
 import numpy as np
 import torch
@@ -8,6 +9,84 @@ from pydantic import BaseModel
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
 from gaussian_splatting.utils.profiler import profile
+
+# Spherical harmonics basis coefficients (real, normalized)
+_SH_C0 = 0.5 * math.sqrt(1.0 / math.pi)
+_SH_C1 = 0.5 * math.sqrt(3.0 / math.pi)
+_SH_C2 = [
+    0.5 * math.sqrt(15.0 / math.pi),
+    -0.5 * math.sqrt(15.0 / math.pi),
+    0.25 * math.sqrt(5.0 / math.pi),
+    -0.5 * math.sqrt(15.0 / math.pi),
+    0.25 * math.sqrt(15.0 / math.pi),
+]
+_SH_C3 = [
+    -0.25 * math.sqrt(35.0 / (2.0 * math.pi)),
+    0.5 * math.sqrt(105.0 / math.pi),
+    -0.25 * math.sqrt(21.0 / (2.0 * math.pi)),
+    0.25 * math.sqrt(7.0 / math.pi),
+    -0.25 * math.sqrt(21.0 / (2.0 * math.pi)),
+    0.25 * math.sqrt(105.0 / math.pi),
+    -0.25 * math.sqrt(35.0 / (2.0 * math.pi)),
+]
+
+
+def _evaluate_sh(
+    sh_coeffs: torch.Tensor,
+    directions: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Evaluate spherical harmonics at unit viewing directions.
+
+    :param sh_coeffs: SH coefficients of shape (N, num_coeffs, 3), supporting degrees 0–3.
+    :param directions: Unit viewing directions of shape (N, 3), from Gaussian toward the camera.
+    :return: RGB colors of shape (N, 3), clamped to [0, 1].
+    """
+    num_coeffs = sh_coeffs.shape[1]
+
+    result = _SH_C0 * sh_coeffs[:, 0, :]  # (N, 3)
+
+    if num_coeffs > 1:
+        x = directions[:, 0:1]
+        y = directions[:, 1:2]
+        z = directions[:, 2:3]
+        result = (
+            result - _SH_C1 * y * sh_coeffs[:, 1, :] + _SH_C1 * z * sh_coeffs[:, 2, :] - _SH_C1 * x * sh_coeffs[:, 3, :]
+        )
+
+    if num_coeffs > 4:
+        x = directions[:, 0:1]
+        y = directions[:, 1:2]
+        z = directions[:, 2:3]
+        xx, yy, zz = x * x, y * y, z * z
+        xy, yz, xz = x * y, y * z, x * z
+        result = (
+            result
+            + _SH_C2[0] * xy * sh_coeffs[:, 4, :]
+            + _SH_C2[1] * yz * sh_coeffs[:, 5, :]
+            + _SH_C2[2] * (2.0 * zz - xx - yy) * sh_coeffs[:, 6, :]
+            + _SH_C2[3] * xz * sh_coeffs[:, 7, :]
+            + _SH_C2[4] * (xx - yy) * sh_coeffs[:, 8, :]
+        )
+
+    if num_coeffs > 9:
+        x = directions[:, 0:1]
+        y = directions[:, 1:2]
+        z = directions[:, 2:3]
+        xx, yy, zz = x * x, y * y, z * z
+        xy = x * y
+        result = (
+            result
+            + _SH_C3[0] * y * (3 * xx - yy) * sh_coeffs[:, 9, :]
+            + _SH_C3[1] * xy * z * sh_coeffs[:, 10, :]
+            + _SH_C3[2] * y * (4 * zz - xx - yy) * sh_coeffs[:, 11, :]
+            + _SH_C3[3] * z * (2 * zz - 3 * xx - 3 * yy) * sh_coeffs[:, 12, :]
+            + _SH_C3[4] * x * (4 * zz - xx - yy) * sh_coeffs[:, 13, :]
+            + _SH_C3[5] * z * (xx - yy) * sh_coeffs[:, 14, :]
+            + _SH_C3[6] * x * (xx - 3 * yy) * sh_coeffs[:, 15, :]
+        )
+
+    return torch.clamp(result + 0.5, 0.0, 1.0)
 
 
 def _quaternions_to_rotation_matrices(quaternions: torch.Tensor) -> torch.Tensor:
@@ -117,18 +196,18 @@ class BaseRenderer(ABC):
         world_to_camera = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32).transpose(0, 1)
         camera_position = camera.pose[:3, 3].to(device=self.device, dtype=torch.float32)
 
-        means = gaussians.means.to(device=self.device, dtype=torch.float32)
-        colors = gaussians.colors.to(device=self.device, dtype=torch.float32)
+        means = gaussians.positions.to(device=self.device, dtype=torch.float32)
+        sh_coeffs = gaussians.sh_coeffs.to(device=self.device, dtype=torch.float32)
         opacities = gaussians.opacities.to(device=self.device, dtype=torch.float32)
 
         # Transform all means at once: p_camera = R^T @ (p_world - t)
         camera_means = (means - camera_position) @ world_to_camera.T
 
         return GaussianCollection.from_tensors(
-            means=camera_means,
+            positions=camera_means,
             quaternions=gaussians.quaternions.to(device=self.device, dtype=torch.float32),
             scales=gaussians.scales.to(device=self.device, dtype=torch.float32),
-            colors=colors,
+            sh_coeffs=sh_coeffs,
             opacities=opacities,
         )
 
@@ -141,7 +220,7 @@ class BaseRenderer(ABC):
         principal_point_y = camera.h / 2.0
 
         # Extract camera means (N, 3)
-        camera_means = gaussians.means
+        camera_means = gaussians.positions
         depths = -camera_means[:, 2]
 
         # Filter out gaussians behind the near plane
@@ -155,8 +234,17 @@ class BaseRenderer(ABC):
         valid_means = camera_means[valid_indices]
         valid_quaternions = gaussians.quaternions[valid_indices]
         valid_scales = gaussians.scales[valid_indices]
-        valid_colors = gaussians.colors[valid_indices]
+        valid_sh_coeffs = gaussians.sh_coeffs[valid_indices]
         valid_opacities = gaussians.opacities[valid_indices]
+
+        # Compute world-space viewing directions for SH evaluation.
+        # In camera space the camera is at origin, so the direction from Gaussian to camera
+        # is -valid_means (camera space). Rotate to world space via the camera-to-world rotation.
+        camera_to_world_rot = camera.pose[:3, :3].to(device=self.device, dtype=torch.float32)
+        dirs_camera = -valid_means / torch.norm(valid_means, dim=1, keepdim=True).clamp(min=1e-12)
+        dirs_world = dirs_camera @ camera_to_world_rot.T  # (N, 3)
+
+        valid_colors = _evaluate_sh(sh_coeffs=valid_sh_coeffs, directions=dirs_world)
         valid_depths = depths[valid_indices]
 
         # Project to 2D (N, 2)
@@ -197,7 +285,7 @@ class BaseRenderer(ABC):
             means_2d=means_2d,
             covariances_2d=covariances_2d,
             depths=valid_depths,
-            colors=valid_colors,
+            colors=valid_colors,  # RGB after SH evaluation
             opacities=valid_opacities,
         )
 
