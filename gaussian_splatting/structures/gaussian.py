@@ -8,7 +8,7 @@ class Gaussian:
     mean: torch.Tensor
     quaternion: torch.Tensor  # (4,) as [w, x, y, z]
     scale: torch.Tensor  # (3,)
-    color: torch.Tensor
+    sh_coeffs: torch.Tensor  # (num_sh_coeffs, 3) where num_sh_coeffs = (sh_degree + 1)^2
     opacity: torch.Tensor
 
 
@@ -20,7 +20,7 @@ class GaussianCollection:
         self.means = torch.stack([g.mean for g in gaussians])
         self.quaternions = torch.stack([g.quaternion for g in gaussians])
         self.scales = torch.stack([g.scale for g in gaussians])
-        self.colors = torch.stack([g.color for g in gaussians])
+        self.sh_coeffs = torch.stack([g.sh_coeffs for g in gaussians])
         self.opacities = torch.stack([g.opacity for g in gaussians])
 
     @classmethod
@@ -29,14 +29,14 @@ class GaussianCollection:
         means: torch.Tensor,
         quaternions: torch.Tensor,
         scales: torch.Tensor,
-        colors: torch.Tensor,
+        sh_coeffs: torch.Tensor,
         opacities: torch.Tensor,
     ) -> "GaussianCollection":
         collection = cls.__new__(cls)
         collection.means = means
         collection.quaternions = quaternions
         collection.scales = scales
-        collection.colors = colors
+        collection.sh_coeffs = sh_coeffs
         collection.opacities = opacities
 
         return collection
@@ -48,7 +48,7 @@ class GaussianCollection:
                 mean=self.means[i],
                 quaternion=self.quaternions[i],
                 scale=self.scales[i],
-                color=self.colors[i],
+                sh_coeffs=self.sh_coeffs[i],
                 opacity=self.opacities[i],
             )
             for i in range(len(self))
