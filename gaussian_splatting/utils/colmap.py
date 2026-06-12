@@ -278,11 +278,15 @@ class ColmapRunner:
         positions = torch.tensor(positions, dtype=torch.float32)
         colors_rgb = torch.tensor(colors_uint8, dtype=torch.float32) / 255.0
 
-        C0 = 1 / (2 * np.sqrt(np.pi))
-        sh_dc = (colors_rgb - 0.5) / C0
-        sh_coeffs = sh_dc.unsqueeze(1)
-
         n_points = positions.shape[0]
+
+        SH_DEGREE = 3
+        NUM_SH_COEFFS = (SH_DEGREE + 1) ** 2  # 16
+
+        C0 = 1 / (2 * np.sqrt(np.pi))
+        sh_dc = (colors_rgb - 0.5) / C0  # (N, 3)
+        sh_rest = torch.zeros((n_points, NUM_SH_COEFFS - 1, 3), dtype=torch.float32)
+        sh_coeffs = torch.cat([sh_dc.unsqueeze(1), sh_rest], dim=1)  # (N, 16, 3)
         scene_extent = torch.norm(positions.max(dim=0).values - positions.min(dim=0).values)
         base_sigma = torch.clamp(scene_extent / np.sqrt(float(n_points)), min=1e-4)
         scales = base_sigma.expand(n_points, 1).repeat(1, 3)
