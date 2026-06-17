@@ -1,3 +1,8 @@
+training_images_path: datasets/lego/train
+poses_json_path: datasets/lego/poses_colmap.json
+intrinsics_json_path: datasets/lego/intrinsics.json
+ply_path: datasets/lego/gaussians.ply
+
 renderer_config:
   name: naive
   focal_length: 200
@@ -6,23 +11,5 @@ renderer_config:
 
 trainer_config:
   epochs: 100
-
-# inference_pipeline_config:
-#   name: single_image
-#   look_at: [0, 0, 0]
-#   position: [-30, -30, 10]
-
-inference_pipeline_config:
-  name: orbit
-  center: [0, 0, 0]
-  fps: 24
-  n_frames: 15
-  min_radius: 4
-  max_radius: 6
-  radius_freq: 0.5
-  n_revolutions: 2
-  min_phi: 0
-  max_phi: 180
-  phi_freq: 0.5
 
 output_folder: output/fly_inference

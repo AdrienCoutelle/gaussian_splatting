@@ -1,5 +1,9 @@
+import os
+
 import click
 import yaml
+
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"  # TODO@Adrien: Use a .env
 
 from gaussian_splatting.structures.launchers.training_launcher import TrainingConfig, TrainingLauncher
 
@@ -16,7 +20,7 @@ def main(config_path: str) -> None:
     config = TrainingConfig(**config_dict)
     launcher = TrainingLauncher(config)
 
-    # launcher.run()
+    launcher.run()
 
 
 if __name__ == "__main__":

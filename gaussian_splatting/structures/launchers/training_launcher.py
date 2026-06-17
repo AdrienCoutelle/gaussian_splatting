@@ -1,11 +1,15 @@
+import os
+
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.device import Device
-from gaussian_splatting.structures.inference_pipelines.factory import InferencePipelineFactory, PipelineConfig
 from gaussian_splatting.structures.renderers.factory import RendererConfig, RendererFactory
-from gaussian_splatting.structures.training.trainer import TrainerConfig
+from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
+from gaussian_splatting.utils.colmap import ColmapConfig, ColmapRunner
+from gaussian_splatting.utils.image import is_image
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_loader import PLYLoader
+from gaussian_splatting.utils.profiler import Profiler
 
 logger = Logger("TRAINING_LAUNCHER")
 
@@ -13,7 +17,11 @@ logger = Logger("TRAINING_LAUNCHER")
 class TrainingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    inference_pipeline_config: PipelineConfig
+    training_images_path: str
+    poses_json_path: str
+    intrinsics_json_path: str
+    ply_path: str
+
     renderer_config: RendererConfig
     trainer_config: TrainerConfig
     output_folder: str
@@ -27,44 +35,77 @@ class TrainingLauncher:
         self.configuration = configuration
         device = Device.get()
 
-        ply_handler = PLYLoader("output/colmap/lego/points3D.ply")
+        if not os.path.exists(self.configuration.training_images_path):
+            raise FileNotFoundError(f"Training images folder does not exist: {self.configuration.training_images_path}")
 
+        images = [
+            f
+            for f in os.listdir(self.configuration.training_images_path)
+            if is_image(f)
+        ]  # fmt: skip
+        if len(images) == 0:
+            raise ValueError(f"No image files found in: {self.configuration.training_images_path}")
+        logger.info(f"{len(images)} training images found in {self.configuration.training_images_path}.")
+
+        self.run_colmap_if_needed()
+
+        ply_handler = PLYLoader(self.configuration.ply_path)
         ply_handler.log_info()
         gaussian_collection = ply_handler.get_gaussians()
-        gaussians = gaussian_collection.to_list()
 
         renderer = RendererFactory.create_renderer(
             configuration=self.configuration.renderer_config,
             device=device,
         )
 
-        self.pipeline = InferencePipelineFactory.create(
+        self.trainer = Trainer(
+            gaussians_collection=gaussian_collection,
             renderer=renderer,
-            gaussians=gaussians,
-            configuration=self.configuration.inference_pipeline_config,
-            device=device,
+            training_images_path=self.configuration.training_images_path,
+            poses_json_path=self.configuration.poses_json_path,
+            intrinsics_json_path=self.configuration.intrinsics_json_path,
             output_folder=self.configuration.output_folder,
+            configuration=self.configuration.trainer_config,
+            device=device,
         )
 
-        self.pipeline.run()
+    def run_colmap_if_needed(self) -> None:
+        files = {
+            "poses": self.configuration.poses_json_path,
+            "intrinsics": self.configuration.intrinsics_json_path,
+            "ply": self.configuration.ply_path,
+        }
+        existing = {
+            name: os.path.exists(path)
+            for name, path in files.items()
+        }  # fmt:skip
 
-    #     self.trainer = Trainer(
-    #         initial_gaussians=gaussian_collection,
-    #         renderer=renderer,
-    #         # training_images_path=self.configuration.training_images_path,
-    #         # poses_json_path=self.configuration.poses_json_path,
-    #         # intrinsics_json_path=self.configuration.intrinsics_json_path,
-    #         output_folder=self.configuration.output_folder,
-    #         configuration=self.configuration.training_config,
-    #         device=device,
-    #     )
+        if all(existing.values()):
+            logger.info("COLMAP outputs already exist, skipping COLMAP.")
+            return
 
-    # def run(self) -> None:
-    #     logger.info("Starting Gaussian Splatting training...")
+        if any(existing.values()):
+            missing = [name for name, exists in existing.items() if not exists]
+            present = [name for name, exists in existing.items() if exists]
+            raise FileNotFoundError(f"Inconsistent COLMAP outputs: {present} exist but {missing} do not.")
 
-    #     try:
-    #         self.trainer.run()
-    #     except KeyboardInterrupt:
-    #         logger.info("Training interrupted by user.")
-    #     finally:
-    #         Profiler.print_stats()
+        logger.info("COLMAP outputs not found, running COLMAP...")
+        colmap_config = ColmapConfig(
+            images_path=self.configuration.training_images_path,
+            output_folder=os.path.dirname(self.configuration.poses_json_path),
+            poses_filename=os.path.basename(self.configuration.poses_json_path),
+            intrinsics_filename=os.path.basename(self.configuration.intrinsics_json_path),
+            points_filename=os.path.basename(self.configuration.ply_path),
+        )
+        runner = ColmapRunner(colmap_config)
+        runner.run()
+
+    def run(self) -> None:
+        logger.info("Starting Gaussian Splatting training...")
+
+        try:
+            self.trainer.run()
+        except KeyboardInterrupt:
+            logger.info("Training interrupted by user.")
+        finally:
+            Profiler.print_stats()
