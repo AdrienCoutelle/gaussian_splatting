@@ -4,7 +4,7 @@ from gaussian_splatting.structures.device import Device
 from gaussian_splatting.structures.inference_pipelines.factory import InferencePipelineFactory, PipelineConfig
 from gaussian_splatting.structures.renderers.factory import RendererConfig, RendererFactory
 from gaussian_splatting.utils.logger import Logger
-from gaussian_splatting.utils.ply_loader import load_ply_gaussians
+from gaussian_splatting.utils.ply.ply_loader import PLYLoader
 from gaussian_splatting.utils.profiler import Profiler
 
 logger = Logger("INFERENCE_LAUNCHER")
@@ -27,7 +27,8 @@ class InferenceLauncher:
         self.config = config
         self.device = Device.get()
 
-        gaussian_collection = load_ply_gaussians(ply_path=self.config.ply_file_path)
+        ply_handler = PLYLoader(file_path=self.config.ply_file_path)
+        gaussian_collection = ply_handler.get_gaussians()
         gaussians = gaussian_collection.to_list()
 
         renderer = RendererFactory.create_renderer(

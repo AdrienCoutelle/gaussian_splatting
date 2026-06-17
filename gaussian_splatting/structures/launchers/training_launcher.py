@@ -5,7 +5,7 @@ from gaussian_splatting.structures.inference_pipelines.factory import InferenceP
 from gaussian_splatting.structures.renderers.factory import RendererConfig, RendererFactory
 from gaussian_splatting.structures.training.trainer import TrainerConfig
 from gaussian_splatting.utils.logger import Logger
-from gaussian_splatting.utils.ply_handler import PLYHandler
+from gaussian_splatting.utils.ply.ply_loader import PLYLoader
 
 logger = Logger("TRAINING_LAUNCHER")
 
@@ -27,7 +27,7 @@ class TrainingLauncher:
         self.configuration = configuration
         device = Device.get()
 
-        ply_handler = PLYHandler("output/colmap/lego/points3D.ply")
+        ply_handler = PLYLoader("output/colmap/lego/points3D.ply")
 
         ply_handler.log_info()
         gaussian_collection = ply_handler.get_gaussians()
