@@ -2,6 +2,7 @@ import os
 
 from pydantic import BaseModel, ConfigDict
 
+from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.device import Device
 from gaussian_splatting.structures.renderers.factory import RendererConfig, RendererFactory
 from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
@@ -49,6 +50,13 @@ class TrainingLauncher:
 
         self.run_colmap_if_needed()
 
+        dataset = GaussianSplattingDataset(
+            images_folder_path=self.configuration.training_images_path,
+            poses_path=self.configuration.poses_json_path,
+            intrinsics_path=self.configuration.intrinsics_json_path,
+        )
+        logger.info(f"Dataset created with {len(dataset)} entries.")
+
         ply_handler = PLYLoader(self.configuration.ply_path)
         ply_handler.log_info()
         gaussian_collection = ply_handler.get_gaussians()
@@ -61,9 +69,7 @@ class TrainingLauncher:
         self.trainer = Trainer(
             gaussians_collection=gaussian_collection,
             renderer=renderer,
-            training_images_path=self.configuration.training_images_path,
-            poses_json_path=self.configuration.poses_json_path,
-            intrinsics_json_path=self.configuration.intrinsics_json_path,
+            dataset=dataset,
             output_folder=self.configuration.output_folder,
             configuration=self.configuration.trainer_config,
             device=device,

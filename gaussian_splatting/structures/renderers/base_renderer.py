@@ -1,6 +1,6 @@
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-import math
 
 import numpy as np
 import torch
@@ -146,12 +146,16 @@ class BaseRenderer(ABC):
         self.config = configuration
         self.device = device
 
-    def render(
+    def render_tensor(
         self,
         camera: Camera,
-        gaussians: list[Gaussian],
-    ) -> Image:
-        gaussian_collection = GaussianCollection(gaussians=gaussians)
+        gaussians: list[Gaussian] | GaussianCollection,
+    ) -> torch.Tensor:
+        """Render to a float tensor (H, W, 3) in [0, 1], keeping the computation graph intact."""
+        if isinstance(gaussians, GaussianCollection):
+            gaussian_collection = gaussians
+        else:
+            gaussian_collection = GaussianCollection(gaussians=gaussians)
 
         camera_space_gaussians = self._transform_to_camera_space(
             camera=camera,
@@ -170,9 +174,7 @@ class BaseRenderer(ABC):
         )
 
         if screen_space_gaussians is None:
-            return Image(
-                array=output_image.clamp(0.0, 1.0).detach().cpu().numpy(),
-            )
+            return output_image
 
         sorted_indices = torch.argsort(screen_space_gaussians.depths, descending=False)
 
@@ -184,8 +186,15 @@ class BaseRenderer(ABC):
             image_width=camera.w,
         )
 
+        return output_image.clamp(0.0, 1.0)
+
+    def render(
+        self,
+        camera: Camera,
+        gaussians: list[Gaussian],
+    ) -> Image:
         return Image(
-            array=output_image.clamp(0.0, 1.0).detach().cpu().numpy(),
+            array=self.render_tensor(camera=camera, gaussians=gaussians).detach().cpu().numpy(),
         )
 
     def _transform_to_camera_space(
