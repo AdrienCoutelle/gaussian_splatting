@@ -1,0 +1,19 @@
+training_images_path: datasets/lego/train
+poses_json_path: datasets/lego/poses_colmap.json
+intrinsics_json_path: datasets/lego/intrinsics.json
+ply_path: datasets/lego/gaussians.ply
+
+renderer_config:
+  name: naive
+  focal_length: 200
+  width: 600
+  height: 400
+  use_checkpointing: true
+  max_gaussians_per_batch: 64
+
+trainer_config:
+  epochs: 100
+  render_scale: 0.25
+  gradient_accumulation_steps: 8
+
+output_folder: output/fly_inference

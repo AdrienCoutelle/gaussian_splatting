@@ -83,6 +83,17 @@ class Profiler:
             if attr_name.startswith("__"):
                 continue
 
+            raw = None
+            for klass in target_class.__mro__:
+                if attr_name in klass.__dict__:
+                    raw = klass.__dict__[attr_name]
+                    break
+
+            if isinstance(raw, staticmethod):
+                wrapped = cls._profile_method(raw.__func__, class_name=class_name)
+                setattr(target_class, attr_name, staticmethod(wrapped))
+                continue
+
             attr = getattr(target_class, attr_name)
 
             if callable(attr):
