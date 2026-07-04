@@ -1,19 +1,66 @@
 from typing import Literal
-from typing import Literal
 
 import torch
-from pydantic import ConfigDict
 import torch.utils.checkpoint
 from pydantic import ConfigDict
 from tqdm import tqdm
 
-from gaussian_splatting.structures.renderers.base_renderer import (
-    BaseRenderer,
-    RendererParams,
-    RendererParams,
-    ScreenSpaceGaussians,
-)
+from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer, RendererParams, ScreenSpaceGaussians
 from gaussian_splatting.utils.profiler import profile
+
+
+def _compute_gaussian_batch_contribution(
+    batch_means: torch.Tensor,
+    batch_conics: torch.Tensor,
+    batch_colors: torch.Tensor,
+    batch_opacities: torch.Tensor,
+    batch_extents: torch.Tensor,
+    tile_pixels: torch.Tensor,
+    tile_transmittance: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Compute the color contribution and updated transmittance for one batch of Gaussians over a tile.
+
+    :param batch_means: (G, 2) screen-space means for this batch.
+    :param batch_conics: (G, 3) [a, b, c] inverse covariance entries.
+    :param batch_colors: (G, 3) RGB colors.
+    :param batch_opacities: (G,) per-Gaussian opacities.
+    :param batch_extents: (G,) pixel-space radii for early rejection.
+    :param tile_pixels: (P, 2) pixel center coordinates for the tile.
+    :param tile_transmittance: (P,) accumulated transmittance before this batch.
+    :return: (tile_image_delta (P, 3), new_tile_transmittance (P,))
+    """
+    delta = tile_pixels.unsqueeze(0) - batch_means.unsqueeze(1)  # (G, P, 2)
+    delta_x = delta[..., 0]
+    delta_y = delta[..., 1]
+
+    mahalanobis = (
+        batch_conics[:, 0].unsqueeze(1) * delta_x.square()
+        + 2.0 * batch_conics[:, 1].unsqueeze(1) * delta_x * delta_y
+        + batch_conics[:, 2].unsqueeze(1) * delta_y.square()
+    )  # (G, P)
+
+    within_extent = (torch.abs(delta_x) <= batch_extents.unsqueeze(1)) & (
+        torch.abs(delta_y) <= batch_extents.unsqueeze(1)
+    )  # (G, P)
+
+    alpha = torch.clamp(torch.exp(-0.5 * mahalanobis) * batch_opacities.unsqueeze(1), 0.0, 1.0)
+    alpha = torch.where(within_extent, alpha, torch.zeros_like(alpha))
+
+    one_minus_alpha = 1.0 - alpha  # (G, P)
+    transmittance_before = torch.cat(
+        [
+            torch.ones((1, alpha.shape[1]), device=alpha.device, dtype=alpha.dtype),
+            torch.cumprod(one_minus_alpha[:-1], dim=0),
+        ],
+        dim=0,
+    )  # (G, P)
+
+    contribution = alpha * transmittance_before * tile_transmittance.unsqueeze(0)  # (G, P)
+    tile_image_delta = contribution.transpose(0, 1) @ batch_colors  # (P, 3)
+    new_tile_transmittance = tile_transmittance * torch.prod(one_minus_alpha, dim=0)  # (P,)
+
+    return tile_image_delta, new_tile_transmittance
 
 
 class NaiveRendererParams(RendererParams):
@@ -30,6 +77,7 @@ class NaiveRendererParams(RendererParams):
     gaussian_extent: float = 3.0
     tile_size: int = 16
     max_gaussians_per_batch: int = 1024
+    use_checkpointing: bool = False
 
 
 @profile
