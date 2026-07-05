@@ -141,10 +141,8 @@ class BaseRenderer(ABC):
     def __init__(
         self,
         configuration: RendererParams,
-        device: torch.device,
     ):
         self.config = configuration
-        self.device = device
 
     def render_tensor(
         self,
@@ -169,7 +167,6 @@ class BaseRenderer(ABC):
 
         output_image = torch.zeros(
             (camera.h, camera.w, 3),
-            device=self.device,
             dtype=torch.float32,
         )
 

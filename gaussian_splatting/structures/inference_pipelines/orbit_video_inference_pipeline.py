@@ -14,7 +14,7 @@ from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
+from gaussian_splatting.structures.renderer.renderer import Renderer
 
 
 class OrbitPipelineInferenceParams(InferencePipelineParams):
@@ -42,16 +42,14 @@ class OrbitPipelineInferenceParams(InferencePipelineParams):
 class OrbitVideoInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
-        renderer: BaseRenderer,
+        renderer: Renderer,
         gaussians: list[Gaussian],
         configuration: OrbitPipelineInferenceParams,
-        device: torch.device,
         output_folder: str,
         epoch: int | None = None,
     ):
         super().__init__(
             configuration=configuration,
-            device=device,
             output_folder=output_folder,
             epoch=epoch,
         )

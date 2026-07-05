@@ -30,13 +30,11 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
         renderer: BaseRenderer,
         gaussians: list[Gaussian],
         configuration: SingleImageInferencePipelineParams,
-        device: torch.device,
         output_folder: str,
         epoch: int | None = None,
     ):
         super().__init__(
             configuration=configuration,
-            device=device,
             output_folder=output_folder,
             epoch=epoch,
         )
@@ -56,8 +54,6 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
             self.output_folder,
             output_name,
         )
-
-        self.device = device
 
     def run(self) -> None:
         with torch.no_grad():

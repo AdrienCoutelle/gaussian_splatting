@@ -1,6 +1,5 @@
 from typing import Annotated
 
-import torch
 from pydantic import Field
 
 from gaussian_splatting.structures.gaussian import Gaussian
@@ -41,7 +40,6 @@ class InferencePipelineFactory:
         renderer: BaseRenderer,
         gaussians: list[Gaussian],
         configuration: PipelineConfig,
-        device: torch.device,
         output_folder: str,
         epoch: int | None = None,
     ) -> BaseInferencePipeline:
@@ -52,6 +50,5 @@ class InferencePipelineFactory:
             gaussians=gaussians,
             configuration=configuration,
             output_folder=output_folder,
-            device=device,
             epoch=epoch,
         )

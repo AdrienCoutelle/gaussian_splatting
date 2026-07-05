@@ -214,20 +214,17 @@ class InteractiveInferencePipeline(BaseInferencePipeline):
         renderer: BaseRenderer,
         gaussians: list[Gaussian],
         configuration: InteractiveInferencePipelineParams,
-        device: torch.device,
         output_folder: str,
         epoch: int | None = None,
     ):
         super().__init__(
             configuration=configuration,
-            device=device,
             output_folder=output_folder,
             epoch=epoch,
         )
 
         self.renderer = renderer
         self.gaussians = gaussians
-        self.device = device
 
         self.input_handler = InteractiveInputHandler(
             initial_position=self.configuration.initial_position,

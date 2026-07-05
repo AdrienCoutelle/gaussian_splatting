@@ -13,12 +13,10 @@ class BaseInferencePipeline(ABC):
     def __init__(
         self,
         configuration: InferencePipelineParams,
-        device: torch.device,
         output_folder: str,
         epoch: int | None = None,
     ):
         self.configuration = configuration
-        self.device = device
         self.output_folder = output_folder
         self.epoch = epoch
 
