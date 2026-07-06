@@ -1,4 +1,3 @@
-import math
 from dataclasses import dataclass
 
 import mlx.core as mx
@@ -7,109 +6,11 @@ from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
+from gaussian_splatting.structures.renderer.rasterizer import Rasterizer
+from gaussian_splatting.structures.renderer.utils import _evaluate_sh, _quaternions_to_rotation_matrices
 from gaussian_splatting.utils.logger import Logger
 
 logger = Logger("RENDERER")
-
-# Spherical harmonics basis coefficients (real, normalized)
-_SH_C0 = 0.5 * math.sqrt(1.0 / math.pi)
-_SH_C1 = 0.5 * math.sqrt(3.0 / math.pi)
-_SH_C2 = [
-    0.5 * math.sqrt(15.0 / math.pi),
-    -0.5 * math.sqrt(15.0 / math.pi),
-    0.25 * math.sqrt(5.0 / math.pi),
-    -0.5 * math.sqrt(15.0 / math.pi),
-    0.25 * math.sqrt(15.0 / math.pi),
-]
-_SH_C3 = [
-    -0.25 * math.sqrt(35.0 / (2.0 * math.pi)),
-    0.5 * math.sqrt(105.0 / math.pi),
-    -0.25 * math.sqrt(21.0 / (2.0 * math.pi)),
-    0.25 * math.sqrt(7.0 / math.pi),
-    -0.25 * math.sqrt(21.0 / (2.0 * math.pi)),
-    0.25 * math.sqrt(105.0 / math.pi),
-    -0.25 * math.sqrt(35.0 / (2.0 * math.pi)),
-]
-
-
-def _evaluate_sh(
-    sh_coeffs: mx.array,
-    directions: mx.array,
-) -> mx.array:
-    """
-    Evaluate spherical harmonics at unit viewing directions.
-
-    :param sh_coeffs: SH coefficients of shape (N, num_coeffs, 3), supporting degrees 0–3.
-    :param directions: Unit viewing directions of shape (N, 3), from Gaussian toward the camera.
-    :return: RGB colors of shape (N, 3), clamped to [0, 1].
-    """
-    num_coeffs = sh_coeffs.shape[1]
-
-    result = _SH_C0 * sh_coeffs[:, 0, :]  # (N, 3)
-
-    if num_coeffs > 1:
-        x = directions[:, 0:1]
-        y = directions[:, 1:2]
-        z = directions[:, 2:3]
-        result = (
-            result - _SH_C1 * y * sh_coeffs[:, 1, :] + _SH_C1 * z * sh_coeffs[:, 2, :] - _SH_C1 * x * sh_coeffs[:, 3, :]
-        )
-
-    if num_coeffs > 4:
-        x = directions[:, 0:1]
-        y = directions[:, 1:2]
-        z = directions[:, 2:3]
-        xx, yy, zz = x * x, y * y, z * z
-        xy, yz, xz = x * y, y * z, x * z
-        result = (
-            result
-            + _SH_C2[0] * xy * sh_coeffs[:, 4, :]
-            + _SH_C2[1] * yz * sh_coeffs[:, 5, :]
-            + _SH_C2[2] * (2.0 * zz - xx - yy) * sh_coeffs[:, 6, :]
-            + _SH_C2[3] * xz * sh_coeffs[:, 7, :]
-            + _SH_C2[4] * (xx - yy) * sh_coeffs[:, 8, :]
-        )
-
-    if num_coeffs > 9:
-        x = directions[:, 0:1]
-        y = directions[:, 1:2]
-        z = directions[:, 2:3]
-        xx, yy, zz = x * x, y * y, z * z
-        xy = x * y
-        result = (
-            result
-            + _SH_C3[0] * y * (3 * xx - yy) * sh_coeffs[:, 9, :]
-            + _SH_C3[1] * xy * z * sh_coeffs[:, 10, :]
-            + _SH_C3[2] * y * (4 * zz - xx - yy) * sh_coeffs[:, 11, :]
-            + _SH_C3[3] * z * (2 * zz - 3 * xx - 3 * yy) * sh_coeffs[:, 12, :]
-            + _SH_C3[4] * x * (4 * zz - xx - yy) * sh_coeffs[:, 13, :]
-            + _SH_C3[5] * z * (xx - yy) * sh_coeffs[:, 14, :]
-            + _SH_C3[6] * x * (xx - 3 * yy) * sh_coeffs[:, 15, :]
-        )
-
-    return mx.clip(result + 0.5, 0.0, 1.0)
-
-
-def _quaternions_to_rotation_matrices(quaternions: mx.array) -> mx.array:
-    """Convert (N, 4) quaternions [w, x, y, z] to (N, 3, 3) rotation matrices."""
-    norms = mx.clip(mx.sqrt(mx.sum(quaternions**2, axis=1, keepdims=True)), 1e-12, None)
-    quaternions = quaternions / norms
-    w, x, y, z = quaternions[:, 0], quaternions[:, 1], quaternions[:, 2], quaternions[:, 3]
-
-    return mx.stack(
-        [
-            1 - 2 * (y**2 + z**2),
-            2 * (x * y - w * z),
-            2 * (x * z + w * y),
-            2 * (x * y + w * z),
-            1 - 2 * (x**2 + z**2),
-            2 * (y * z - w * x),
-            2 * (x * z - w * y),
-            2 * (y * z + w * x),
-            1 - 2 * (x**2 + y**2),
-        ],
-        axis=1,
-    ).reshape(-1, 3, 3)
 
 
 @dataclass
@@ -194,18 +95,12 @@ class Renderer:
         )
         logger.info("Gaussians in screen space.")
 
-        output_image = mx.zeros(
-            (camera.h, camera.w, 3),
-            dtype=mx.float32,
-        )
-
         if screen_space_gaussians is None:
-            return output_image
+            return mx.zeros((camera.h, camera.w, 3), dtype=mx.float32)
 
         sorted_indices = mx.argsort(screen_space_gaussians.depths)
 
-        self._splat_gaussians_vectorized(
-            image=output_image,
+        output_image = self._splat_gaussians_vectorized(
             gaussians=screen_space_gaussians,
             sorted_indices=sorted_indices,
             image_height=camera.h,
@@ -246,10 +141,8 @@ class Renderer:
         camera: Camera,
         gaussians: GaussianCollection,
     ) -> ScreenSpaceGaussians | None:
-        principal_point_x = camera.w / 2.0  # TODO@Adrien: Do this in the Camera class
-        principal_point_y = camera.h / 2.0
+        principal_point_x, principal_point_y = camera.principal_point
 
-        # Extract camera means (N, 3)
         camera_means = gaussians.positions
         depths = -camera_means[:, 2]
 
@@ -270,7 +163,7 @@ class Renderer:
         # Compute world-space viewing directions for SH evaluation.
         # In camera space the camera is at origin, so the direction from Gaussian to camera
         # is -valid_means (camera space). Rotate to world space via the camera-to-world rotation.
-        pose = mx.array(camera.pose.detach().cpu().numpy())
+        pose = camera.pose
         camera_to_world_rot = pose[:3, :3]  # (3, 3)
         norms = mx.clip(mx.sqrt(mx.sum(valid_means**2, axis=1, keepdims=True)), 1e-12, None)
         dirs_camera = -valid_means / norms
@@ -329,4 +222,98 @@ class Renderer:
             depths=valid_depths,
             colors=valid_colors,  # RGB after SH evaluation
             opacities=valid_opacities,
+        )
+
+    def _splat_gaussians_vectorized(
+        self,
+        gaussians: ScreenSpaceGaussians,
+        sorted_indices: mx.array,
+        image_height: int,
+        image_width: int,
+    ) -> mx.array:
+        N = gaussians.means_2d.shape[0]
+        if N == 0:
+            return mx.zeros((image_height, image_width, 3), dtype=mx.float32)
+
+        # Sort all data by depth (front-to-back)
+        means_2d = gaussians.means_2d[sorted_indices]  # (N, 2)
+        covariances_2d = gaussians.covariances_2d[sorted_indices]  # (N, 2, 2)
+        colors = gaussians.colors[sorted_indices]  # (N, 3)
+        opacities = gaussians.opacities[sorted_indices]  # (N,) or (N, 1)
+
+        # Compute conics: inverse of 2D covariance [[a, b], [b, c]]
+        # stored as (q11, q12, q22) = (c/det, -b/det, a/det)
+        a = covariances_2d[:, 0, 0]
+        b = covariances_2d[:, 0, 1]
+        c = covariances_2d[:, 1, 1]
+        det = mx.maximum(a * c - b * b, 1e-10)
+        inv_det = 1.0 / det
+        conic = mx.stack([c * inv_det, -b * inv_det, a * inv_det], axis=1)  # (N, 3)
+
+        if opacities.ndim > 1:
+            opacities = opacities.squeeze(-1)
+
+        tx, ty = self.config.tile_size
+        tile_width = (image_width + tx - 1) // tx
+        tile_height = (image_height + ty - 1) // ty
+        num_tiles = tile_width * tile_height
+
+        # Tile binning in numpy: assign each Gaussian to a tile by its projected mean.
+        # Stable sort preserves the depth order within each tile.
+        xys_np = np.array(means_2d)
+        tile_x = (xys_np[:, 0] / tx).astype(np.int32)
+        tile_y = (xys_np[:, 1] / ty).astype(np.int32)
+        in_bounds = (tile_x >= 0) & (tile_x < tile_width) & (tile_y >= 0) & (tile_y < tile_height)
+        valid_idx = np.where(in_bounds)[0]
+
+        tile_gstart_np = np.zeros(num_tiles, dtype=np.uint32)
+        tile_gcount_np = np.zeros(num_tiles, dtype=np.uint32)
+        reordered_ids = np.empty(0, dtype=np.int32)
+
+        if len(valid_idx) > 0:
+            valid_tile_ids = tile_y[valid_idx] * tile_width + tile_x[valid_idx]
+            order = np.argsort(valid_tile_ids, kind="stable")
+            reordered_ids = valid_idx[order].astype(np.int32)
+            sorted_tile_ids = valid_tile_ids[order]
+
+            unique_tiles, first_occ, counts = np.unique(
+                sorted_tile_ids,
+                return_index=True,
+                return_counts=True,
+            )
+            for tile_id, start, count in zip(unique_tiles, first_occ, counts):
+                tile_gstart_np[tile_id] = start
+                tile_gcount_np[tile_id] = min(count, self.config.max_gaussians_per_tile)
+
+        if len(reordered_ids) == 0:
+            return mx.zeros((image_height, image_width, 3), dtype=mx.float32)
+
+        tile_indices = np.arange(num_tiles, dtype=np.uint32)
+        tile_origins_np = np.stack(
+            [
+                (tile_indices % tile_width) * tx,
+                (tile_indices // tile_width) * ty,
+            ],
+            axis=1,
+        ).astype(np.uint32)
+
+        ids_mx = mx.array(reordered_ids, dtype=mx.int32)
+        gauss_xy = mx.take(means_2d, ids_mx, axis=0).astype(mx.float32)
+        gauss_conic = mx.take(conic, ids_mx, axis=0).astype(mx.float32)
+        gauss_opacity = mx.take(opacities, ids_mx, axis=0).astype(mx.float32)
+        gauss_color = mx.take(colors, ids_mx, axis=0).astype(mx.float32)
+
+        return Rasterizer().rasterize(
+            gauss_xy=gauss_xy,
+            gauss_conic=gauss_conic,
+            gauss_opacity=gauss_opacity,
+            gauss_color=gauss_color,
+            tile_origins=mx.array(tile_origins_np, dtype=mx.uint32),
+            tile_gstart=mx.array(tile_gstart_np, dtype=mx.uint32),
+            tile_gcount=mx.array(tile_gcount_np, dtype=mx.uint32),
+            image_width=image_width,
+            image_height=image_height,
+            tile_size=self.config.tile_size,
+            sigma_cut=self.config.sigma_cut,
+            eps=self.config.eps,
         )
