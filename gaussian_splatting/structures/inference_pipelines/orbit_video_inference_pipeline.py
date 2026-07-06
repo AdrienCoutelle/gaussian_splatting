@@ -3,8 +3,8 @@ import os
 from typing import Annotated, Literal
 
 import cv2
+import mlx.core as mx
 import numpy as np
-import torch
 from pydantic import ConfigDict, Field
 from tqdm import tqdm
 
@@ -100,49 +100,48 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
         ]
 
     def run(self) -> None:
-        with torch.no_grad():
-            for radius, theta, phi in tqdm(
-                zip(
-                    self.radius_list,
-                    self.theta_list,
-                    self.phi_list,
-                    strict=True,
-                ),
-                total=len(self.radius_list),
-                desc="Generating video...",
-            ):
-                pose = self._compute_pose(  # noqa: F841
-                    radius,
-                    theta,
-                    phi,
-                )
+        for radius, theta, phi in tqdm(
+            zip(
+                self.radius_list,
+                self.theta_list,
+                self.phi_list,
+                strict=True,
+            ),
+            total=len(self.radius_list),
+            desc="Generating video...",
+        ):
+            pose = self._compute_pose(  # noqa: F841
+                radius,
+                theta,
+                phi,
+            )
 
-                camera = Camera(
-                    pose=pose,
-                    focal_length=self.renderer.config.focal_length,
-                    width=self.renderer.config.width,
-                    height=self.renderer.config.height,
-                )
+            camera = Camera(
+                pose=pose,
+                focal_length=self.renderer.config.focal_length,
+                width=self.renderer.config.width,
+                height=self.renderer.config.height,
+            )
 
-                frame = self.renderer.render(
-                    camera=camera,
-                    gaussians=self.gaussians,
-                )
+            frame = self.renderer.render(
+                camera=camera,
+                gaussians=self.gaussians,
+            )
 
-                frame_bgr = cv2.cvtColor(
-                    (frame.array * 255).astype(np.uint8),
-                    cv2.COLOR_RGB2BGR,
-                )
-                self.video_writer.write(frame_bgr)
+            frame_bgr = cv2.cvtColor(
+                (frame.array * 255).astype(np.uint8),
+                cv2.COLOR_RGB2BGR,
+            )
+            self.video_writer.write(frame_bgr)
 
-            self.video_writer.release()
+        self.video_writer.release()
 
     def _compute_pose(
         self,
         radius: float,
         theta: float,
         phi: float,
-    ) -> torch.Tensor:
+    ) -> mx.array:
         theta_rad = np.deg2rad(theta)
         phi_rad = np.deg2rad(phi)
 
@@ -152,7 +151,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
 
         cam_pos = np.array([x, y, z]) + self.configuration.center
 
-        return torch.from_numpy(
+        return mx.array(
             self._compute_pose_look_at(
                 position=cam_pos,
                 look_at=self.configuration.center,

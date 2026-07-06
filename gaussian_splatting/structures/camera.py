@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 
-import torch
+import mlx.core as mx
 
 
 @dataclass
 class Camera:
-    pose: torch.Tensor
+    pose: mx.array
     focal_length: float
     width: int
     height: int
