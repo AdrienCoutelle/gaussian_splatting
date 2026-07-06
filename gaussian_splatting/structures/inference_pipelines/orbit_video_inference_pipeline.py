@@ -9,7 +9,7 @@ from pydantic import ConfigDict, Field
 from tqdm import tqdm
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import Gaussian
+from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
@@ -43,7 +43,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
         renderer: Renderer,
-        gaussians: list[Gaussian],
+        gaussians: GaussianCollection,
         configuration: OrbitPipelineInferenceParams,
         output_folder: str,
         epoch: int | None = None,

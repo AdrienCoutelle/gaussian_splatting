@@ -5,10 +5,11 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import Gaussian, GaussianCollection
+from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.renderer.rasterizer import Rasterizer
 from gaussian_splatting.structures.renderer.utils import _evaluate_sh, _quaternions_to_rotation_matrices
 from gaussian_splatting.utils.logger import Logger
+from gaussian_splatting.utils.profiler import profile
 
 logger = Logger("RENDERER")
 
@@ -51,6 +52,7 @@ class RendererConfig(BaseModel):
     verbose: bool = False
 
 
+@profile
 class Renderer:
     def __init__(
         self,
@@ -61,7 +63,7 @@ class Renderer:
     def render(
         self,
         camera: Camera,
-        gaussians: list[Gaussian] | GaussianCollection,
+        gaussians: GaussianCollection,
     ) -> Image:
         return Image(
             array=np.array(
@@ -75,17 +77,12 @@ class Renderer:
     def render_tensor(
         self,
         camera: Camera,
-        gaussians: list[Gaussian] | GaussianCollection,
+        gaussians: GaussianCollection,
     ) -> mx.array:
         """Render to a float array (H, W, 3) in [0, 1]."""
-        if isinstance(gaussians, GaussianCollection):  # TODO @Adrien: Remove this check
-            gaussian_collection = gaussians
-        else:
-            gaussian_collection = GaussianCollection(gaussians=gaussians)
-
         camera_space_gaussians = self._transform_positions_to_camera_space(
             camera=camera,
-            gaussians=gaussian_collection,
+            gaussians=gaussians,
         )
         logger.info(f"{len(camera_space_gaussians)} gaussians in camera space.")
 

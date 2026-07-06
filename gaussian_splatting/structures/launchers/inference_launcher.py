@@ -34,7 +34,7 @@ class InferenceLauncher:
 
         self.pipeline = InferencePipelineFactory.create(
             renderer=renderer,
-            gaussians=gaussian_collection.to_list(),
+            gaussians=gaussian_collection,
             configuration=self.config.inference_pipeline_config,
             output_folder=self.config.output_folder,
         )

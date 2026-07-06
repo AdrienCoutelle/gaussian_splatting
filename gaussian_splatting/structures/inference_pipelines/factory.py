@@ -2,7 +2,7 @@ from typing import Annotated
 
 from pydantic import Field
 
-from gaussian_splatting.structures.gaussian import Gaussian
+from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import BaseInferencePipeline
 from gaussian_splatting.structures.inference_pipelines.interactive_pipeline import (
     InteractiveInferencePipeline,
@@ -38,7 +38,7 @@ class InferencePipelineFactory:
     @staticmethod
     def create(
         renderer: BaseRenderer,
-        gaussians: list[Gaussian],
+        gaussians: GaussianCollection,
         configuration: PipelineConfig,
         output_folder: str,
         epoch: int | None = None,
