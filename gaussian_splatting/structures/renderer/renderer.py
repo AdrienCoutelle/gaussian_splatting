@@ -97,11 +97,10 @@ class Renderer:
 
         sorted_indices = mx.argsort(screen_space_gaussians.depths)
 
-        output_image = self._splat_gaussians_vectorized(
+        output_image = self._splat_gaussians(
             gaussians=screen_space_gaussians,
             sorted_indices=sorted_indices,
-            image_height=camera.h,
-            image_width=camera.w,
+            camera=camera,
         )
 
         return mx.clip(output_image, 0.0, 1.0)
@@ -130,12 +129,23 @@ class Renderer:
         camera: Camera,
         gaussians: GaussianCollection,
     ) -> ScreenSpaceGaussians | None:
+        """
+        To project points:
+        [u,v,1]^T = K@[x/z, y/z, 1]^T
+        where K is the camera intrinsics matrix:
+        K = [
+            [f, 0, cx],
+            [0, f, cy],
+            [0, 0, 1]
+        ]
+        u = f * x/z + cx
+        v = f * y/z + cy
+        """
         principal_point_x, principal_point_y = camera.principal_point
 
         camera_means = gaussians.positions
         depths = -camera_means[:, 2]
 
-        # Filter out gaussians behind the near plane (force eval to check count)
         valid_indices = mx.array(np.where(np.array(depths > self.config.near_plane) > 0)[0])
         mx.eval(valid_indices)
         if valid_indices.shape[0] == 0:
@@ -147,11 +157,15 @@ class Renderer:
         valid_sh_coeffs = gaussians.sh_coeffs[valid_indices]
         valid_opacities = gaussians.opacities[valid_indices]
         valid_depths = depths[valid_indices]
-        N = valid_means.shape[0]
 
-        # Compute world-space viewing directions for SH evaluation.
-        # In camera space the camera is at origin, so the direction from Gaussian to camera
-        # is -valid_means (camera space). Rotate to world space via the camera-to-world rotation.
+        means_2d = mx.stack(
+            [
+                camera.f * (valid_means[:, 0] / valid_depths) + principal_point_x,
+                -camera.f * (valid_means[:, 1] / valid_depths) + principal_point_y,  # flip y-axis for image coordinates
+            ],
+            axis=1,
+        )
+
         pose = camera.pose
         camera_to_world_rot = pose[:3, :3]  # (3, 3)
         norms = mx.clip(mx.sqrt(mx.sum(valid_means**2, axis=1, keepdims=True)), 1e-12, None)
@@ -160,17 +174,7 @@ class Renderer:
 
         valid_colors = _evaluate_sh(sh_coeffs=valid_sh_coeffs, directions=dirs_world)
 
-        # Project to 2D (N, 2)
-        means_2d = mx.stack(
-            [
-                camera.f * (valid_means[:, 0] / valid_depths) + principal_point_x,
-                principal_point_y - camera.f * (valid_means[:, 1] / valid_depths),
-            ],
-            axis=1,
-        )
-
-        # Compute Jacobian for all gaussians at once (N, 2, 3)
-        zeros = mx.zeros((N,))
+        zeros = mx.zeros((valid_means.shape[0],))
         row0 = mx.stack(
             [
                 camera.f / valid_depths,
@@ -189,39 +193,31 @@ class Renderer:
         )  # (N, 3)
         jacobians = mx.stack([row0, row1], axis=1)  # (N, 2, 3)
 
-        # Compute 3D world-space covariance from quaternion and scale: R @ S^2 @ R^T
         R = _quaternions_to_rotation_matrices(valid_quaternions)  # (N, 3, 3)
         S_squared = (valid_scales**2)[:, :, None] * mx.eye(3)[None, :, :]  # (N, 3, 3)
         world_covariances = R @ S_squared @ mx.transpose(R, (0, 2, 1))  # (N, 3, 3)
 
-        # Transform to camera space: W_rot @ Σ_world @ W_rot^T
         world_to_camera_rot = camera_to_world_rot.T  # (3, 3)
         camera_covariances = world_to_camera_rot @ world_covariances @ world_to_camera_rot.T  # (N, 3, 3)
 
-        # Compute 2D covariances: J @ Σ_cam @ J^T for all gaussians
         covariances_2d = jacobians @ camera_covariances @ mx.transpose(jacobians, (0, 2, 1))  # (N, 2, 2)
-
-        # Add regularization
-        # regularization = mx.eye(2) * self.config.covariance_regularization
-        # covariances_2d += regularization[None]
 
         return ScreenSpaceGaussians(
             means_2d=means_2d,
             covariances_2d=covariances_2d,
             depths=valid_depths,
-            colors=valid_colors,  # RGB after SH evaluation
+            colors=valid_colors,
             opacities=valid_opacities,
         )
 
-    def _splat_gaussians_vectorized(
+    def _splat_gaussians(
         self,
         gaussians: ScreenSpaceGaussians,
         sorted_indices: mx.array,
-        image_height: int,
-        image_width: int,
+        camera: Camera,
     ) -> mx.array:
         if len(gaussians) == 0:
-            return mx.zeros((image_height, image_width, 3), dtype=mx.float32)
+            return mx.zeros((camera.h, camera.w, 3), dtype=mx.float32)
 
         means_2d = gaussians.means_2d[sorted_indices]  # (N, 2)
         covariances_2d = gaussians.covariances_2d[sorted_indices]  # (N, 2, 2)
@@ -241,8 +237,8 @@ class Renderer:
             opacities = opacities.squeeze(-1)
 
         tx, ty = self.config.tile_size
-        tile_width = (image_width + tx - 1) // tx
-        tile_height = (image_height + ty - 1) // ty
+        tile_width = (camera.w + tx - 1) // tx
+        tile_height = (camera.h + ty - 1) // ty
         num_tiles = tile_width * tile_height
 
         # Tile binning in numpy: assign each Gaussian to a tile by its projected mean.
@@ -273,7 +269,7 @@ class Renderer:
                 tile_gcount_np[tile_id] = min(count, self.config.max_gaussians_per_tile)
 
         if len(reordered_ids) == 0:
-            return mx.zeros((image_height, image_width, 3), dtype=mx.float32)
+            return mx.zeros((camera.h, camera.w, 3), dtype=mx.float32)
 
         tile_indices = np.arange(num_tiles, dtype=np.uint32)
         tile_origins_np = np.stack(
@@ -298,8 +294,8 @@ class Renderer:
             tile_origins=mx.array(tile_origins_np, dtype=mx.uint32),
             tile_gstart=mx.array(tile_gstart_np, dtype=mx.uint32),
             tile_gcount=mx.array(tile_gcount_np, dtype=mx.uint32),
-            image_width=image_width,
-            image_height=image_height,
+            image_width=camera.w,
+            image_height=camera.h,
             tile_size=self.config.tile_size,
             sigma_cut=self.config.sigma_cut,
             eps=self.config.eps,
