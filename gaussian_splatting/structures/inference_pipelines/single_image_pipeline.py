@@ -3,17 +3,17 @@ import os
 from typing import Literal
 
 import cv2
+import mlx.core as mx
 import numpy as np
-import torch
 from pydantic import ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import Gaussian
+from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
+from gaussian_splatting.structures.renderer.renderer import Renderer
 
 
 class SingleImageInferencePipelineParams(InferencePipelineParams):
@@ -27,8 +27,8 @@ class SingleImageInferencePipelineParams(InferencePipelineParams):
 class SingleImageInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
-        renderer: BaseRenderer,
-        gaussians: list[Gaussian],
+        renderer: Renderer,
+        gaussians: GaussianCollection,
         configuration: SingleImageInferencePipelineParams,
         output_folder: str,
         epoch: int | None = None,
@@ -56,31 +56,28 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
         )
 
     def run(self) -> None:
-        with torch.no_grad():
-            pose = torch.from_numpy(  # noqa: F841
-                self._compute_pose_look_at(
-                    position=np.array(self.configuration.position),
-                    look_at=np.array(self.configuration.look_at),
-                    world_up=np.array([0, 0, 1]),
-                )
-            )
+        pose = self._compute_pose_look_at(
+            position=np.array(self.configuration.position),
+            look_at=np.array(self.configuration.look_at),
+            world_up=np.array([0, 0, 1]),
+        )
 
-            camera = Camera(
-                pose=pose,
-                focal_length=self.renderer.config.focal_length,
-                width=self.renderer.config.width,
-                height=self.renderer.config.height,
-            )
+        camera = Camera(
+            pose=mx.array(pose),
+            focal_length=self.renderer.config.focal_length,
+            width=self.renderer.config.width,
+            height=self.renderer.config.height,
+        )
 
-            rendered_image = self.renderer.render(
-                camera=camera,
-                gaussians=self.gaussians,
-            )
+        rendered_image = self.renderer.render(
+            camera=camera,
+            gaussians=self.gaussians,
+        )
 
-            image_array = (rendered_image.array * 255).astype(np.uint8)
-            image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+        image_array = (rendered_image.array * 255).astype(np.uint8)
+        image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
 
-            cv2.imwrite(
-                filename=self.output_path,
-                img=image_bgr,
-            )
+        cv2.imwrite(
+            filename=self.output_path,
+            img=image_bgr,
+        )

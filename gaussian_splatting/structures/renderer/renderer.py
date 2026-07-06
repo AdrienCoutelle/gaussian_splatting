@@ -35,6 +35,9 @@ class ScreenSpaceGaussians:
     colors: mx.array
     opacities: mx.array
 
+    def __len__(self) -> int:
+        return int(self.means_2d.shape[0])
+
 
 class RendererConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -79,18 +82,15 @@ class Renderer:
         camera: Camera,
         gaussians: GaussianCollection,
     ) -> mx.array:
-        """Render to a float array (H, W, 3) in [0, 1]."""
-        camera_space_gaussians = self._transform_positions_to_camera_space(
+        self._transform_positions_to_camera_space(
             camera=camera,
             gaussians=gaussians,
         )
-        logger.info(f"{len(camera_space_gaussians)} gaussians in camera space.")
 
         screen_space_gaussians = self._project_to_screen_space(
             camera=camera,
-            gaussians=camera_space_gaussians,
+            gaussians=gaussians,
         )
-        logger.info("Gaussians in screen space.")
 
         if screen_space_gaussians is None:
             return mx.zeros((camera.h, camera.w, 3), dtype=mx.float32)
@@ -110,7 +110,7 @@ class Renderer:
         self,
         camera: Camera,
         gaussians: GaussianCollection,
-    ) -> GaussianCollection:
+    ) -> None:
         """
         Transform gaussians position and rotation to camera space.
 
@@ -123,15 +123,7 @@ class Renderer:
         r_world_to_camera = camera.pose[:3, :3].T
         camera_center = camera.pose[:3, 3:4]
 
-        camera_means = (r_world_to_camera @ (gaussians.positions.T - camera_center)).T
-
-        return GaussianCollection.from_tensors(
-            positions=camera_means,
-            quaternions=gaussians.quaternions,
-            scales=gaussians.scales,
-            sh_coeffs=gaussians.sh_coeffs,
-            opacities=gaussians.opacities,
-        )
+        gaussians.positions = (r_world_to_camera @ (gaussians.positions.T - camera_center)).T
 
     def _project_to_screen_space(
         self,
@@ -228,11 +220,9 @@ class Renderer:
         image_height: int,
         image_width: int,
     ) -> mx.array:
-        N = gaussians.means_2d.shape[0]
-        if N == 0:
+        if len(gaussians) == 0:
             return mx.zeros((image_height, image_width, 3), dtype=mx.float32)
 
-        # Sort all data by depth (front-to-back)
         means_2d = gaussians.means_2d[sorted_indices]  # (N, 2)
         covariances_2d = gaussians.covariances_2d[sorted_indices]  # (N, 2, 2)
         colors = gaussians.colors[sorted_indices]  # (N, 3)
