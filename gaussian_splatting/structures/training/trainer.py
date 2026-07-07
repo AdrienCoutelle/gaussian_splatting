@@ -2,14 +2,16 @@ import os
 from typing import Annotated
 
 import cv2
-import torch
-import torch.nn as nn
+import mlx.core as mx
+import mlx.optimizers as opt
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 from tqdm import tqdm
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.renderer.rasterizer import Rasterizer
 from gaussian_splatting.structures.renderer.renderer import Renderer
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_saver import PLYSaver
@@ -45,25 +47,37 @@ class Trainer:
 
         os.makedirs(output_folder, exist_ok=True)
 
-        # Wrap Gaussian tensors as trainable parameters
-        self.positions = nn.Parameter(gaussians_collection.positions)
-        self.quaternions = nn.Parameter(gaussians_collection.quaternions)
-        self.scales = nn.Parameter(gaussians_collection.scales)
-        self.sh_coeffs = nn.Parameter(gaussians_collection.sh_coeffs)
-        self.opacities = nn.Parameter(gaussians_collection.opacities)
+        # Disable caching entirely using the non-deprecated MLX API
+        mx.set_cache_limit(0)
 
-        self.optimizer = torch.optim.Adam(
-            [self.positions, self.quaternions, self.scales, self.sh_coeffs, self.opacities],
-            lr=configuration.learning_rate,
+        # 16GB M1 Safety Limits:
+        # Capping the batch size at 128 and tiles at 512 keeps loop allocations small.
+        self.renderer.config.max_gaussians_per_batch = min(self.renderer.config.max_gaussians_per_batch, 128)
+        self.renderer.config.max_gaussians_per_tile = min(self.renderer.config.max_gaussians_per_tile, 512)
+
+        self.renderer.rasterizer = Rasterizer(
+            gaussian_extent=self.renderer.config.gaussian_extent,
+            tile_size=self.renderer.config.tile_size,
+            max_gaussians_per_batch=self.renderer.config.max_gaussians_per_batch,
         )
 
-    def _build_gaussian_collection(self) -> GaussianCollection:
+        self.params = {
+            "positions": mx.array(gaussians_collection.positions, dtype=mx.float16),
+            "quaternions": mx.array(gaussians_collection.quaternions, dtype=mx.float16),
+            "scales": mx.array(gaussians_collection.scales, dtype=mx.float16),
+            "sh_coeffs": mx.array(gaussians_collection.sh_coeffs, dtype=mx.float16),
+            "opacities": mx.array(gaussians_collection.opacities, dtype=mx.float16),
+        }
+
+        self.optimizer = opt.Adam(learning_rate=configuration.learning_rate)
+
+    def _build_gaussian_collection(self, params: dict[str, mx.array]) -> GaussianCollection:
         return GaussianCollection.from_tensors(
-            positions=self.positions,
-            quaternions=self.quaternions,
-            scales=self.scales,
-            sh_coeffs=self.sh_coeffs,
-            opacities=self.opacities,
+            positions=params["positions"],
+            quaternions=params["quaternions"],
+            scales=params["scales"],
+            sh_coeffs=params["sh_coeffs"],
+            opacities=params["opacities"],
         )
 
     def _load_training_image(
@@ -71,8 +85,7 @@ class Trainer:
         image_name: str,
         target_height: int,
         target_width: int,
-    ) -> torch.Tensor | None:
-        """Load a training image as a float tensor (H, W, 3) in [0, 1] resized to the camera resolution."""
+    ) -> mx.array | None:
         for ext in [".png", ".jpg", ".jpeg"]:
             path = os.path.join(self.dataset.images_folder_path, image_name + ext)
             if not os.path.exists(path):
@@ -83,7 +96,7 @@ class Trainer:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if img.shape[0] != target_height or img.shape[1] != target_width:
                 img = cv2.resize(img, (target_width, target_height))
-            return torch.tensor(img / 255.0, dtype=torch.float32)
+            return mx.array(img / 255.0, dtype=mx.float16)
         return None
 
     def _save_checkpoint(
@@ -91,13 +104,7 @@ class Trainer:
         epoch: int,
     ) -> None:
         checkpoint_path = os.path.join(self.output_folder, f"checkpoint_epoch_{epoch:04d}.ply")
-        gaussians_collection = GaussianCollection.from_tensors(
-            positions=self.positions.detach(),
-            quaternions=self.quaternions.detach(),
-            scales=self.scales.detach(),
-            sh_coeffs=self.sh_coeffs.detach(),
-            opacities=self.opacities.detach(),
-        )
+        gaussians_collection = self._build_gaussian_collection(self.params)
         PLYSaver(checkpoint_path).save_gaussians(gaussians_collection)
         logger.info(f"Saved checkpoint to {checkpoint_path}")
 
@@ -107,13 +114,28 @@ class Trainer:
         camera_items = list(self.dataset.items)
         scale = self.configuration.render_scale
 
+        def render_from_params(params: dict[str, mx.array], camera: Camera) -> mx.array:
+            gaussians = self._build_gaussian_collection(params)
+            return self.renderer.render_tensor(camera=camera, gaussians=gaussians)
+
+        # Gradient checkpointing to bypass holding backward activations in memory
+        checkpointed_render = mx.checkpoint(render_from_params)
+
+        def loss_fn(params: dict[str, mx.array], camera: Camera, gt_image: mx.array, valid_idx: mx.array) -> mx.array:
+            sliced_params = {k: v[valid_idx] for k, v in params.items()}
+            rendered = checkpointed_render(sliced_params, camera)
+            return mx.mean(mx.abs(rendered - gt_image))
+
+        loss_and_grad_fn = mx.value_and_grad(loss_fn)
+
         for epoch in tqdm(range(self.configuration.epochs), desc="Training"):
             epoch_loss = 0.0
             num_rendered = 0
 
-            # Shuffle cameras each epoch for better gradient diversity
-            indices = torch.randperm(len(camera_items)).tolist()
+            indices = mx.random.permutation(len(camera_items)).tolist()
             accum_steps = self.configuration.gradient_accumulation_steps
+
+            accumulated_grads = {k: mx.zeros_like(v) for k, v in self.params.items()}
 
             for step, idx in enumerate(indices):
                 logger.info(
@@ -123,9 +145,22 @@ class Trainer:
 
                 render_h = max(1, round(camera.h * scale))
                 render_w = max(1, round(camera.w * scale))
+
+                # Safe resolution capping for 16GB limits (~400x300 maximum footprint)
+                # This drops intermediate matrices from ~500MB to ~60MB.
+                max_pixels = 400 * 300
+                current_pixels = render_h * render_w
+                if current_pixels > max_pixels:
+                    adjust_scale = np.sqrt(max_pixels / current_pixels)
+                    render_h = max(1, round(render_h * adjust_scale))
+                    render_w = max(1, round(render_w * adjust_scale))
+                    active_focal_length = camera.focal_length * scale * adjust_scale
+                else:
+                    active_focal_length = camera.focal_length * scale
+
                 render_camera = Camera(
                     pose=camera.pose,
-                    focal_length=camera.focal_length * scale,
+                    focal_length=active_focal_length,
                     width=render_w,
                     height=render_h,
                 )
@@ -138,36 +173,72 @@ class Trainer:
                 if gt_image is None:
                     continue
 
-                # Build collection directly from parameter tensors — no per-gaussian indexing
-                gaussians = self._build_gaussian_collection()
-                rendered = self.renderer.render_tensor(camera=render_camera, gaussians=gaussians)
+                # Eager Frustum Culling (executed outside of computation graph)
+                positions = self.params["positions"]
+                r_world_to_camera = mx.array(render_camera.pose[:3, :3].T)
+                camera_center = mx.array(render_camera.pose[:3, 3:4])
 
-                loss = torch.mean(torch.abs(rendered - gt_image)) / accum_steps
+                mx.eval(positions)  # Ensure coordinates are evaluated before calculation
 
-                logger.info(
-                    f"Epoch {epoch + 1}/{self.configuration.epochs} — camera {idx + 1}/{len(camera_items)} — "
-                    f"L1 loss: {loss.item() * accum_steps:.6f}"
+                cam_positions = (r_world_to_camera @ (positions.T - camera_center)).T
+                depths = -cam_positions[:, 2]
+
+                # Keep Gaussians within depth window
+                depth_mask = (depths > 0.1) & (depths < 20.0)
+
+                # Keep Gaussians projected within or near screen boundaries
+                principal_point_x, principal_point_y = render_camera.principal_point
+                means_2d_x = active_focal_length * (cam_positions[:, 0] / mx.maximum(depths, 1e-4)) + principal_point_x
+                means_2d_y = -active_focal_length * (cam_positions[:, 1] / mx.maximum(depths, 1e-4)) + principal_point_y
+
+                margin = 80.0
+                frustum_mask = (
+                    (means_2d_x >= -margin)
+                    & (means_2d_x <= render_camera.width + margin)
+                    & (means_2d_y >= -margin)
+                    & (means_2d_y <= render_camera.height + margin)
                 )
 
-                if step % accum_steps == 0:
-                    self.optimizer.zero_grad()
+                valid_mask = depth_mask & frustum_mask
 
-                loss.backward()
+                # Convert the boolean mask to NumPy to extract active indices eagerly,
+                # then return them as an MLX integer index array.
+                valid_mask_np = np.array(valid_mask)
+                valid_idx_np = np.where(valid_mask_np)[0]
+
+                valid_idx = mx.array(valid_idx_np, dtype=mx.int32)
+                mx.eval(valid_idx)  # Materialize index list
+
+                logger.info(f"Culling: keeping {valid_idx.shape[0]} / {positions.shape[0]} visible Gaussians.")
+
+                if valid_idx.shape[0] == 0:
+                    continue
+
+                # Forward and backward pass using active parameters
+                loss, grads = loss_and_grad_fn(self.params, render_camera, gt_image, valid_idx)
+
+                for k in self.params:
+                    accumulated_grads[k] = accumulated_grads[k] + grads[k] / accum_steps
+
+                mx.eval(loss, accumulated_grads)
+
+                scaled_loss_val = loss.item()
+                logger.info(f"Epoch {epoch + 1}/{self.configuration.epochs} — L1 loss: {scaled_loss_val:.6f}")
 
                 is_last_step = step == len(indices) - 1
                 if (step + 1) % accum_steps == 0 or is_last_step:
-                    self.optimizer.step()
+                    self.optimizer.update(self.params, accumulated_grads)
+                    mx.eval(self.params, self.optimizer.state)
+
+                    accumulated_grads = {k: mx.zeros_like(v) for k, v in self.params.items()}
+                    mx.eval(accumulated_grads)
                     logger.info("Ran backpropagation and optimizer step.")
 
-                epoch_loss += loss.item()
+                epoch_loss += scaled_loss_val
                 num_rendered += 1
 
-                del rendered, gaussians, loss
-
-                logger.info(
-                    f"Epoch {epoch + 1}/{self.configuration.epochs} — camera {idx + 1}/{len(camera_items)} — "
-                    f"rendered and updated Gaussians, cleared cache."
-                )
+                del loss, grads, gt_image, valid_idx
+                mx.metal.clear_cache()
 
             if num_rendered > 0:
                 avg_loss = epoch_loss / num_rendered

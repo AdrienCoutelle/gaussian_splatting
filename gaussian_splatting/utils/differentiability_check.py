@@ -1,96 +1,7 @@
-# import mlx.core as mx
-
-# from gaussian_splatting.structures.camera import Camera
-# from gaussian_splatting.structures.gaussian import GaussianCollection
-# from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
-
-
-# def assert_renderer_differentiable(renderer) -> None:
-#     """
-#     Verifies that the renderer's computational graph is fully differentiable.
-#     Generates internal dummy structures and raises a RuntimeError if gradients
-#     are missing, non-finite, or disconnected.
-#     """
-#     print("[INFO] Initializing differentiability check...")
-
-#     try:
-#         pose = mx.eye(4)
-
-#         camera = Camera(
-#             pose=pose,
-#             width=renderer.config.width,
-#             height=renderer.config.height,
-#             focal_length=renderer.config.focal_length,
-#         )
-#     except Exception as e:
-#         raise RuntimeError(f"Failed to initialize Camera for the test. Verify your Camera signature. Error: {e}")
-
-#     # 2. Define differentiable inputs for a single Gaussian positioned in front of the camera
-#     positions = mx.array([[0.0, 0.0, -3.0]], dtype=mx.float32)  # 3 units in front
-#     quaternions = mx.array([[1.0, 0.0, 0.0, 0.0]], dtype=mx.float32)
-#     scales = mx.array([[-1.0, -1.0, -1.0]], dtype=mx.float32)
-#     sh_coeffs = mx.zeros((1, 16, 3), dtype=mx.float32)
-#     opacities = mx.array([[0.9]], dtype=mx.float32)
-
-#     # 3. Define a simple loss function over the rendered output
-#     def loss_fn(p, q, s, sh, o):
-#         gaussians = GaussianCollection.from_tensors(
-#             positions=p,
-#             quaternions=q,
-#             scales=s,
-#             sh_coeffs=sh,
-#             opacities=o,
-#         )
-#         rendered = renderer.render_tensor(camera=camera, gaussians=gaussians)
-#         # Using the mean of the output tensor as a target-free loss
-#         return mx.mean(rendered)
-
-#     grad_fn = mx.value_and_grad(loss_fn, argnums=[0, 1, 2, 3, 4])
-
-#     try:
-#         loss_val, grads = grad_fn(positions, quaternions, scales, sh_coeffs, opacities)
-#         mx.eval(loss_val, grads)
-#     except Exception as e:
-#         raise RuntimeError(f"Execution failed during the forward or backward pass: {e}")
-
-#     # 6. Verify gradient validity
-#     param_names = ["positions", "quaternions", "scales", "sh_coeffs", "opacities"]
-#     failed_params = []
-
-#     for name, grad in zip(param_names, grads):
-#         if grad is None:
-#             print(f"[ERROR] Gradient for '{name}' is None (disconnected graph).")
-#             failed_params.append(name)
-#         elif mx.any(mx.isnan(grad)).item():
-#             print(f"[ERROR] Gradient for '{name}' contains NaNs.")
-#             failed_params.append(name)
-#         elif mx.max(mx.abs(grad)).item() == 0.0:
-#             print(f"[WARNING] Gradient for '{name}' is zero. Verify projection boundaries if unexpected.")
-#         else:
-#             grad_norm = mx.linalg.norm(grad).item()
-#             print(f"[SUCCESS] '{name}' gradient is valid. Norm: {grad_norm:.6f}")
-
-#     if failed_params:
-#         raise RuntimeError(f"Renderer is not fully differentiable. Broken parameter paths: {failed_params}")
-
-#     print("[SUCCESS] All gradient checks passed. The renderer is differentiable.")
-
-
-# renderer_config = RendererConfig(
-#     width=64,
-#     height=64,
-#     focal_length=50.0,
-# )
-
-# renderer = Renderer(renderer_config)
-
-# assert_renderer_differentiable(renderer)
-
 import mlx.core as mx
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import GaussianCollection
-from gaussian_splatting.structures.renderer.rasterizer import Rasterizer
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig, ScreenSpaceGaussians
 
 
@@ -210,7 +121,7 @@ def debug_renderer_differentiability(renderer) -> None:
                 opacities=opacs,
             )
             sorted_indices = mx.array([0], dtype=mx.int32)
-            out = renderer._splat_gaussians(
+            out = renderer._run_rasterization(
                 gaussians=ssg,
                 sorted_indices=sorted_indices,
                 camera=camera,
@@ -234,40 +145,6 @@ def debug_renderer_differentiability(renderer) -> None:
             print("")
     except Exception as e:
         print(f"  ❌ Step 3 crashed with error: {e}\n")
-
-    # =========================================================================
-    # DIAGNOSTIC 4: Raw Rasterizer Object
-    # =========================================================================
-    print("Checking Step 4: Raw Rasterizer Custom Kernel Integration...")
-    try:
-        # Mock values directly matching Rasterizer interface
-        xy = mx.array([[32.0, 32.0]], dtype=mx.float32)
-        conic = mx.array([[0.5, 0.0, 0.5]], dtype=mx.float32)
-        opacity = mx.array([0.9], dtype=mx.float32)
-        color = mx.array([[1.0, 0.5, 0.2]], dtype=mx.float32)
-
-        def step4_loss(x, c, o, col):
-            out = Rasterizer().rasterize(
-                gauss_xy=x,
-                gauss_conic=c,
-                gauss_opacity=o,
-                gauss_color=col,
-                tile_origins=mx.array([[0, 0]], dtype=mx.uint32),
-                tile_gstart=mx.array([0], dtype=mx.uint32),
-                tile_gcount=mx.array([1], dtype=mx.uint32),
-                image_width=renderer.config.width,
-                image_height=renderer.config.height,
-                tile_size=renderer.config.tile_size,
-                sigma_cut=renderer.config.sigma_cut,
-                eps=renderer.config.eps,
-            )
-            return mx.mean(out)
-
-        _, step4_grads = mx.value_and_grad(step4_loss, argnums=[0, 1, 2, 3])(xy, conic, opacity, color)
-        mx.eval(step4_grads)
-        print("  ✅ Step 4 (Raw Rasterizer) is differentiable.\n")
-    except Exception as e:
-        print(f"  ❌ Step 4 crashed with error: {e}\n")
 
     print("=== DIAGNOSTIC COMPLETE ===")
 

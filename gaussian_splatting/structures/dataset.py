@@ -1,14 +1,13 @@
 import json
 import os
 
+import mlx.core as mx
 import numpy as np
-import torch
-from torch.utils.data import Dataset
 
 from gaussian_splatting.structures.camera import Camera
 
 
-class GaussianSplattingDataset(Dataset):
+class GaussianSplattingDataset:
     def __init__(
         self,
         images_folder_path: str,
@@ -60,7 +59,7 @@ class GaussianSplattingDataset(Dataset):
         tx: float,
         ty: float,
         tz: float,
-    ) -> torch.Tensor:
+    ) -> mx.array:
         """
         Convert a COLMAP world-to-camera pose to a camera-to-world matrix in the OpenGL convention
         (X right, Y up, -Z forward). COLMAP stores: p_cam = R_cw @ p_world + t_cw.
@@ -90,7 +89,7 @@ class GaussianSplattingDataset(Dataset):
         flip = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)
         pose = pose @ flip
 
-        return torch.tensor(pose, dtype=torch.float32)
+        return mx.array(pose, dtype=mx.float32)
 
     def __len__(self) -> int:
         return len(self.items)
