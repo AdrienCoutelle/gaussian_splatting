@@ -3,7 +3,6 @@ import os
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
-from gaussian_splatting.structures.device import Device
 from gaussian_splatting.structures.renderers.factory import RendererConfig, RendererFactory
 from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
 from gaussian_splatting.utils.colmap import ColmapConfig, ColmapRunner
@@ -34,7 +33,6 @@ class TrainingLauncher:
         configuration: TrainingConfig,
     ) -> None:
         self.configuration = configuration
-        device = Device.get()
 
         if not os.path.exists(self.configuration.training_images_path):
             raise FileNotFoundError(f"Training images folder does not exist: {self.configuration.training_images_path}")
@@ -63,7 +61,6 @@ class TrainingLauncher:
 
         renderer = RendererFactory.create_renderer(
             configuration=self.configuration.renderer_config,
-            device=device,
         )
 
         self.trainer = Trainer(
@@ -72,7 +69,6 @@ class TrainingLauncher:
             dataset=dataset,
             output_folder=self.configuration.output_folder,
             configuration=self.configuration.trainer_config,
-            device=device,
         )
 
     def run_colmap_if_needed(self) -> None:

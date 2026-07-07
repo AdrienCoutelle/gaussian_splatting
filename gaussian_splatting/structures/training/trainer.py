@@ -10,7 +10,7 @@ from tqdm import tqdm
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.gaussian import GaussianCollection
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
+from gaussian_splatting.structures.renderer.renderer import Renderer
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_saver import PLYSaver
 from gaussian_splatting.utils.profiler import profile
@@ -33,26 +33,24 @@ class Trainer:
     def __init__(
         self,
         gaussians_collection: GaussianCollection,
-        renderer: BaseRenderer,
+        renderer: Renderer,
         dataset: GaussianSplattingDataset,
         output_folder: str,
         configuration: TrainerConfig,
-        device: torch.device,
     ) -> None:
         self.renderer = renderer
         self.dataset = dataset
         self.output_folder = output_folder
         self.configuration = configuration
-        self.device = device
 
         os.makedirs(output_folder, exist_ok=True)
 
         # Wrap Gaussian tensors as trainable parameters
-        self.positions = nn.Parameter(gaussians_collection.positions.to(device=device, dtype=torch.float32))
-        self.quaternions = nn.Parameter(gaussians_collection.quaternions.to(device=device, dtype=torch.float32))
-        self.scales = nn.Parameter(gaussians_collection.scales.to(device=device, dtype=torch.float32))
-        self.sh_coeffs = nn.Parameter(gaussians_collection.sh_coeffs.to(device=device, dtype=torch.float32))
-        self.opacities = nn.Parameter(gaussians_collection.opacities.to(device=device, dtype=torch.float32))
+        self.positions = nn.Parameter(gaussians_collection.positions)
+        self.quaternions = nn.Parameter(gaussians_collection.quaternions)
+        self.scales = nn.Parameter(gaussians_collection.scales)
+        self.sh_coeffs = nn.Parameter(gaussians_collection.sh_coeffs)
+        self.opacities = nn.Parameter(gaussians_collection.opacities)
 
         self.optimizer = torch.optim.Adam(
             [self.positions, self.quaternions, self.scales, self.sh_coeffs, self.opacities],
@@ -67,12 +65,6 @@ class Trainer:
             sh_coeffs=self.sh_coeffs,
             opacities=self.opacities,
         )
-
-    def _clear_device_cache(self) -> None:
-        if self.device.type == "mps":
-            torch.mps.empty_cache()
-        elif self.device.type == "cuda":
-            torch.cuda.empty_cache()
 
     def _load_training_image(
         self,
@@ -91,7 +83,7 @@ class Trainer:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if img.shape[0] != target_height or img.shape[1] != target_width:
                 img = cv2.resize(img, (target_width, target_height))
-            return torch.tensor(img / 255.0, dtype=torch.float32, device=self.device)
+            return torch.tensor(img / 255.0, dtype=torch.float32)
         return None
 
     def _save_checkpoint(
@@ -171,7 +163,6 @@ class Trainer:
                 num_rendered += 1
 
                 del rendered, gaussians, loss
-                self._clear_device_cache()
 
                 logger.info(
                     f"Epoch {epoch + 1}/{self.configuration.epochs} — camera {idx + 1}/{len(camera_items)} — "
