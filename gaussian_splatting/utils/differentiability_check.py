@@ -191,7 +191,7 @@ def debug_renderer_differentiability(renderer) -> None:
         print(f"  ❌ Step 2 crashed with error: {e}\n")
 
     # =========================================================================
-    # DIAGNOSTIC 3: _splat_gaussians_vectorized
+    # DIAGNOSTIC 3: _splat_gaussians
     # =========================================================================
     print("Checking Step 3: Gaussian Splatting and Binning Logic...")
     try:
@@ -210,11 +210,10 @@ def debug_renderer_differentiability(renderer) -> None:
                 opacities=opacs,
             )
             sorted_indices = mx.array([0], dtype=mx.int32)
-            out = renderer._splat_gaussians_vectorized(
+            out = renderer._splat_gaussians(
                 gaussians=ssg,
                 sorted_indices=sorted_indices,
-                image_height=camera.h,
-                image_width=camera.w,
+                camera=camera,
             )
             return mx.mean(out)
 
@@ -230,7 +229,7 @@ def debug_renderer_differentiability(renderer) -> None:
                 print(f"  ❌ Step 3 failed for screen space variable: {name}")
                 step3_passed = False
         if step3_passed:
-            print("  ✅ Step 3 (_splat_gaussians_vectorized) is differentiable.\n")
+            print("  ✅ Step 3 (_splat_gaussians) is differentiable.\n")
         else:
             print("")
     except Exception as e:
