@@ -3,7 +3,7 @@ import os
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
-from gaussian_splatting.structures.renderers.factory import RendererConfig, RendererFactory
+from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
 from gaussian_splatting.utils.colmap import ColmapConfig, ColmapRunner
 from gaussian_splatting.utils.image import is_image
@@ -59,9 +59,7 @@ class TrainingLauncher:
         ply_handler.log_info()
         gaussian_collection = ply_handler.get_gaussians()
 
-        renderer = RendererFactory.create_renderer(
-            configuration=self.configuration.renderer_config,
-        )
+        renderer = Renderer(self.configuration.renderer_config)
 
         self.trainer = Trainer(
             gaussians_collection=gaussian_collection,

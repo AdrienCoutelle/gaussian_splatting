@@ -4,7 +4,6 @@ intrinsics_json_path: datasets/lego/intrinsics.json
 ply_path: datasets/lego/gaussians.ply
 
 renderer_config:
-  name: naive
   focal_length: 200
   width: 600
   height: 400

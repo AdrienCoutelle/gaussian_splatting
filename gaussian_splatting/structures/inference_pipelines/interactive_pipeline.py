@@ -12,7 +12,7 @@ from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
 )
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
+from gaussian_splatting.structures.renderer.renderer import Renderer
 
 
 class StopInferenceException(Exception):
@@ -211,7 +211,7 @@ class InteractiveInferencePipelineParams(InferencePipelineParams):
 class InteractiveInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
-        renderer: BaseRenderer,
+        renderer: Renderer,
         gaussians: list[Gaussian],
         configuration: InteractiveInferencePipelineParams,
         output_folder: str,

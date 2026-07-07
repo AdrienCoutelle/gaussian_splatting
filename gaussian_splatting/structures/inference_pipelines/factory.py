@@ -16,7 +16,7 @@ from gaussian_splatting.structures.inference_pipelines.single_image_pipeline imp
     SingleImageInferencePipeline,
     SingleImageInferencePipelineParams,
 )
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
+from gaussian_splatting.structures.renderer.renderer import Renderer
 
 PipelineConfig = Annotated[
     (
@@ -37,7 +37,7 @@ class InferencePipelineFactory:
 
     @staticmethod
     def create(
-        renderer: BaseRenderer,
+        renderer: Renderer,
         gaussians: GaussianCollection,
         configuration: PipelineConfig,
         output_folder: str,
