@@ -128,57 +128,43 @@ class Renderer:
         camera_means = gaussians.positions
         depths = -camera_means[:, 2]
 
-        valid_indices = mx.array(np.where(np.array(depths > self.config.near_plane) > 0)[0])
-        mx.eval(valid_indices)
-        if valid_indices.shape[0] == 0:
-            return None
-
-        valid_means = camera_means[valid_indices]
-        valid_quaternions = gaussians.quaternions[valid_indices]
-        valid_sh_coeffs = gaussians.sh_coeffs[valid_indices]
-        valid_depths = depths[valid_indices]
-
-        valid_scales = mx.exp(gaussians.scales[valid_indices])
-
-        valid_opacities = 1.0 / (1.0 + mx.exp(-gaussians.opacities[valid_indices]))
-
         means_2d = mx.stack(
             [
-                camera.f * (valid_means[:, 0] / valid_depths) + principal_point_x,
-                -camera.f * (valid_means[:, 1] / valid_depths) + principal_point_y,
+                camera.f * (gaussians.positions[:, 0] / depths) + principal_point_x,
+                -camera.f * (gaussians.positions[:, 1] / depths) + principal_point_y,
             ],
             axis=1,
         )
 
         pose = camera.pose
         camera_to_world_rot = pose[:3, :3]
-        norms = mx.clip(mx.sqrt(mx.sum(valid_means**2, axis=1, keepdims=True)), 1e-12, None)
-        dirs_camera = -valid_means / norms
+        norms = mx.clip(mx.sqrt(mx.sum(gaussians.positions**2, axis=1, keepdims=True)), 1e-12, None)
+        dirs_camera = -gaussians.positions / norms
         dirs_world = dirs_camera @ camera_to_world_rot.T
+        colors = _evaluate_sh(sh_coeffs=gaussians.sh_coeffs, directions=dirs_world)
 
-        valid_colors = _evaluate_sh(sh_coeffs=valid_sh_coeffs, directions=dirs_world)
-
-        zeros = mx.zeros((valid_means.shape[0],))
+        zeros = mx.zeros((gaussians.positions.shape[0],))
         row0 = mx.stack(
             [
-                camera.f / valid_depths,
+                camera.f / depths,
                 zeros,
-                camera.f * valid_means[:, 0] / (valid_depths**2),
+                camera.f * gaussians.positions[:, 0] / (depths**2),
             ],
             axis=1,
         )
         row1 = mx.stack(
             [
                 zeros,
-                -camera.f / valid_depths,
-                -camera.f * valid_means[:, 1] / (valid_depths**2),
+                -camera.f / depths,
+                -camera.f * gaussians.positions[:, 1] / (depths**2),
             ],
             axis=1,
         )
         jacobians = mx.stack([row0, row1], axis=1)
 
-        R = _quaternions_to_rotation_matrices(valid_quaternions)
-        S_squared = (valid_scales**2)[:, :, None] * mx.eye(3)[None, :, :]
+        scales = mx.exp(gaussians.scales)
+        R = _quaternions_to_rotation_matrices(gaussians.quaternions)
+        S_squared = (scales**2)[:, :, None] * mx.eye(3)[None, :, :]
         world_covariances = R @ S_squared @ mx.transpose(R, (0, 2, 1))
 
         world_to_camera_rot = camera_to_world_rot.T
@@ -189,9 +175,9 @@ class Renderer:
         return ScreenSpaceGaussians(
             means_2d=means_2d,
             covariances_2d=covariances_2d,
-            depths=valid_depths,
-            colors=valid_colors,
-            opacities=valid_opacities,
+            depths=depths,
+            colors=colors,
+            opacities=1.0 / (1.0 + mx.exp(-gaussians.opacities)),
         )
 
     def _run_rasterization(
