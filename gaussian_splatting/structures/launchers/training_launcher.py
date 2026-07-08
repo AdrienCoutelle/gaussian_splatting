@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
@@ -21,6 +22,7 @@ class TrainingConfig(BaseModel):
     poses_json_path: str
     intrinsics_json_path: str
     ply_path: str
+    max_sh_degree: int = 1
 
     renderer_config: RendererConfig
     trainer_config: TrainerConfig
@@ -57,15 +59,18 @@ class TrainingLauncher:
 
         ply_handler = PLYLoader(self.configuration.ply_path)
         ply_handler.log_info()
-        gaussian_collection = ply_handler.get_gaussians()
+        gaussian_collection = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
 
         renderer = Renderer(self.configuration.renderer_config)
+
+        init_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_folder = os.path.join(self.configuration.output_folder, init_date)
 
         self.trainer = Trainer(
             gaussians_collection=gaussian_collection,
             renderer=renderer,
             dataset=dataset,
-            output_folder=self.configuration.output_folder,
+            output_folder=output_folder,
             configuration=self.configuration.trainer_config,
         )
 

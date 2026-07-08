@@ -25,7 +25,7 @@ class PLYLoader:
             f"  Number of gaussians: {len(self.data)}",
         )
 
-    def get_gaussians(self) -> GaussianCollection:
+    def get_gaussians(self, max_sh_degree: int = 3) -> GaussianCollection:
         n = len(self.data)
 
         positions = np.stack(
@@ -54,7 +54,7 @@ class PLYLoader:
 
         opacities = self.data["opacity"].astype(np.float32).reshape(-1, 1)
 
-        SH_DEGREE = 3
+        SH_DEGREE = min(max_sh_degree, 3)
         NUM_SH_COEFFS = (SH_DEGREE + 1) ** 2
         NUM_SH_REST = NUM_SH_COEFFS - 1
 
@@ -72,8 +72,9 @@ class PLYLoader:
 
         sh_rest = np.zeros((n, NUM_SH_REST, 3), dtype=np.float32)
 
+        coeffs_to_load = min(num_rest_in_file, NUM_SH_REST)
         for c in range(3):
-            for k in range(num_rest_in_file):
+            for k in range(coeffs_to_load):
                 sh_rest[:, k, c] = self.data[f"f_rest_{c * num_rest_in_file + k}"]
 
         sh_dc = mx.expand_dims(mx.array(sh_dc, dtype=mx.float32), axis=1)
