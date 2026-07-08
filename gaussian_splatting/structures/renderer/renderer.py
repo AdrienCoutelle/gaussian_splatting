@@ -136,13 +136,6 @@ class Renderer:
             axis=1,
         )
 
-        pose = camera.pose
-        camera_to_world_rot = pose[:3, :3]
-        norms = mx.clip(mx.sqrt(mx.sum(gaussians.positions**2, axis=1, keepdims=True)), 1e-12, None)
-        dirs_camera = -gaussians.positions / norms
-        dirs_world = dirs_camera @ camera_to_world_rot.T
-        colors = _evaluate_sh(sh_coeffs=gaussians.sh_coeffs, directions=dirs_world)
-
         zeros = mx.zeros((gaussians.positions.shape[0],))
         row0 = mx.stack(
             [
@@ -167,6 +160,8 @@ class Renderer:
         S_squared = (scales**2)[:, :, None] * mx.eye(3)[None, :, :]
         world_covariances = R @ S_squared @ mx.transpose(R, (0, 2, 1))
 
+        pose = camera.pose
+        camera_to_world_rot = pose[:3, :3]
         world_to_camera_rot = camera_to_world_rot.T
         camera_covariances = world_to_camera_rot @ world_covariances @ world_to_camera_rot.T
 
@@ -176,9 +171,24 @@ class Renderer:
             means_2d=means_2d,
             covariances_2d=covariances_2d,
             depths=depths,
-            colors=colors,
+            colors=self._get_color(
+                gaussians=gaussians,
+                camera=camera,
+            ),
             opacities=1.0 / (1.0 + mx.exp(-gaussians.opacities)),
         )
+
+    def _get_color(
+        self,
+        gaussians: GaussianCollection,
+        camera: Camera,
+    ) -> mx.array:
+        pose = camera.pose
+        camera_to_world_rot = pose[:3, :3]
+        norms = mx.clip(mx.sqrt(mx.sum(gaussians.positions**2, axis=1, keepdims=True)), 1e-12, None)
+        dirs_camera = -gaussians.positions / norms
+        dirs_world = dirs_camera @ camera_to_world_rot.T
+        return _evaluate_sh(sh_coeffs=gaussians.sh_coeffs, directions=dirs_world)
 
     def _run_rasterization(
         self,

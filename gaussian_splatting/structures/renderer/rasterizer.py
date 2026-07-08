@@ -86,18 +86,14 @@ class Rasterizer:
         # Initialize output canvas
         image = mx.zeros((image_height, image_width, 3), dtype=mx.float32)
 
-        # Extract values in depth order
-        means_2d = gaussians.means_2d[sorted_indices]
-        covariances_2d = gaussians.covariances_2d[sorted_indices]
-        colors = gaussians.colors[sorted_indices]
-        opacities = gaussians.opacities[sorted_indices]
-        if opacities.ndim > 1:
-            opacities = opacities.squeeze(-1)
+        gaussians = gaussians[sorted_indices]
 
-        # Compute conics: inverse of the 2D covariance
-        a = covariances_2d[:, 0, 0]
-        b = covariances_2d[:, 0, 1]
-        c = covariances_2d[:, 1, 1]
+        if gaussians.opacities.ndim > 1:
+            opacities = gaussians.opacities.squeeze(-1)
+
+        a = gaussians.covariances_2d[:, 0, 0]
+        b = gaussians.covariances_2d[:, 0, 1]
+        c = gaussians.covariances_2d[:, 1, 1]
         determinant = mx.maximum(a * c - b * b, 1e-10)
         inverse_determinant = 1.0 / determinant
         conics = mx.stack(
@@ -115,10 +111,10 @@ class Rasterizer:
         max_extent = gaussian_extent * mx.sqrt(mx.maximum(max_variance, 1e-10))
 
         # Pixel bounds of the bounding box
-        min_x = mx.floor(means_2d[:, 0] - max_extent).astype(mx.int32)
-        max_x = mx.ceil(means_2d[:, 0] + max_extent).astype(mx.int32)
-        min_y = mx.floor(means_2d[:, 1] - max_extent).astype(mx.int32)
-        max_y = mx.ceil(means_2d[:, 1] + max_extent).astype(mx.int32)
+        min_x = mx.floor(gaussians.means_2d[:, 0] - max_extent).astype(mx.int32)
+        max_x = mx.ceil(gaussians.means_2d[:, 0] + max_extent).astype(mx.int32)
+        min_y = mx.floor(gaussians.means_2d[:, 1] - max_extent).astype(mx.int32)
+        max_y = mx.ceil(gaussians.means_2d[:, 1] + max_extent).astype(mx.int32)
 
         # Clamp calculations within screen dimensions
         min_x = mx.clip(min_x, 0, image_width)
@@ -135,9 +131,9 @@ class Rasterizer:
         if valid_indices.shape[0] == 0:
             return image
 
-        means_2d = means_2d[valid_indices]
+        means_2d = gaussians.means_2d[valid_indices]
         conics = conics[valid_indices]
-        colors = colors[valid_indices]
+        colors = gaussians.colors[valid_indices]
         opacities = opacities[valid_indices]
         max_extent = max_extent[valid_indices]
         min_x = min_x[valid_indices]
