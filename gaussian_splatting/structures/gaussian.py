@@ -56,3 +56,12 @@ class GaussianCollection:
 
     def __len__(self) -> int:
         return int(self.positions.shape[0])
+
+    def __getitem__(self, idx):
+        return GaussianCollection.from_tensors(
+            positions=self.positions[idx],
+            quaternions=self.quaternions[idx],
+            scales=self.scales[idx],
+            sh_coeffs=self.sh_coeffs[idx],
+            opacities=self.opacities[idx],
+        )
