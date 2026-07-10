@@ -92,11 +92,8 @@ class Renderer:
         if screen_space_gaussians is None:
             return mx.zeros((camera.h, camera.w, 3), dtype=mx.float32)
 
-        sorted_indices = mx.argsort(screen_space_gaussians.depths)
-
         return self._run_rasterization(
             gaussians=screen_space_gaussians,
-            sorted_indices=sorted_indices,
             camera=camera,
         )
 
@@ -193,12 +190,10 @@ class Renderer:
     def _run_rasterization(
         self,
         gaussians: ScreenSpaceGaussians,
-        sorted_indices: mx.array,
         camera: Camera,
     ) -> None:
         image = self.rasterizer.run(
             gaussians=gaussians,
-            sorted_indices=sorted_indices,
             camera=camera,
         )
 
