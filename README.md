@@ -1,4 +1,6 @@
-# 3D Gaussian Splatting
+# 3D Gaussian Splatting with mlx
+
+This repository implements 3D Gaussian Splatting for novel view synthesis, providing both training and rendering pipelines optimized for Apple Silicon devices.
 
 ## Installation
 
@@ -12,13 +14,20 @@ To install the project with its tests dependencies:
 pip install -e .[tests]
 ````
 
-# TODO
+## Launch scripts
 
-- Look at the regularization thing. What is it ? How to setup ? Looks like it changed the aspect of the fly...
-- Clean the inference code.
-- Write a Apple Silicon compatible version of the renderer.
-- Write a CUDA compatible version of the renderer.
-- Make the whole code faster. Delete de Gaussian class, only use the Gaussians class (instead of GaussianCollection)
-- Clean the torch type issue so I don't have to convert everything to float32 in the renderer code.
-- Write the COLMAP wrapper
-- Write the training loop
+You can find configuration file examples [here](config/).
+
+You can use the entrypoints to launch scripts:
+````
+launch_gaussian_splatting_training /path/to/your/config/file.yaml
+
+launch_gaussian_splatting_inference /path/to/your/config/file.yaml
+````
+
+## Reference
+
+This project implements the method described in:
+
+> Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, George Drettakis (2023). *3D Gaussian Splatting for Real-Time Radiance Field Rendering*.  
+> https://arxiv.org/abs/2308.04079
