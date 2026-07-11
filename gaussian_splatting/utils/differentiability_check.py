@@ -120,10 +120,8 @@ def debug_renderer_differentiability(renderer) -> None:
                 colors=colors,
                 opacities=opacs,
             )
-            sorted_indices = mx.array([0], dtype=mx.int32)
             out = renderer._run_rasterization(
                 gaussians=ssg,
-                sorted_indices=sorted_indices,
                 camera=camera,
             )
             return mx.mean(out)
