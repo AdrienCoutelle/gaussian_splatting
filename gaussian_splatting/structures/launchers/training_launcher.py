@@ -23,6 +23,7 @@ class TrainingConfig(BaseModel):
     intrinsics_json_path: str
     ply_path: str
     max_sh_degree: int = 1
+    scale: float = 1
 
     renderer_config: RendererConfig
     trainer_config: TrainerConfig
@@ -54,6 +55,7 @@ class TrainingLauncher:
             images_folder_path=self.configuration.training_images_path,
             poses_path=self.configuration.poses_json_path,
             intrinsics_path=self.configuration.intrinsics_json_path,
+            scale=self.configuration.scale,
         )
         logger.info(f"Dataset created with {len(dataset)} entries.")
 

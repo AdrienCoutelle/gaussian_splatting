@@ -1,6 +1,7 @@
 import json
 import os
 
+import cv2
 import mlx.core as mx
 import numpy as np
 
@@ -13,8 +14,10 @@ class GaussianSplattingDataset:
         images_folder_path: str,
         poses_path: str,
         intrinsics_path: str,
+        scale: int = 1,
     ) -> None:
         self.images_folder_path = images_folder_path
+        self.scale = scale
 
         with open(poses_path) as f:
             poses_data: list[dict] = json.load(f)
@@ -36,7 +39,12 @@ class GaussianSplattingDataset:
                 ty=entry["position"]["y"],
                 tz=entry["position"]["z"],
             )
-            focal_length = (intrinsics["fx"] + intrinsics["fy"]) / 2.0
+
+            # Scale camera width, height, and focal length
+            width = int(intrinsics["width"] // self.scale)
+            height = int(intrinsics["height"] // self.scale)
+            focal_length = ((intrinsics["fx"] + intrinsics["fy"]) / 2.0) / self.scale
+
             image_name = os.path.splitext(entry["name"])[0]
             self.items.append(
                 (
@@ -44,8 +52,8 @@ class GaussianSplattingDataset:
                     Camera(
                         pose=pose,
                         focal_length=focal_length,
-                        width=intrinsics["width"],
-                        height=intrinsics["height"],
+                        width=width,
+                        height=height,
                     ),
                 )
             )
@@ -94,5 +102,34 @@ class GaussianSplattingDataset:
     def __len__(self) -> int:
         return len(self.items)
 
-    def __getitem__(self, idx: int) -> tuple[str, Camera]:
-        return self.items[idx]
+    def __getitem__(self, idx: int) -> tuple[mx.array, Camera]:
+        image_name, camera = self.items[idx]
+        image = self._load_image(image_name, camera.width, camera.height)
+        return image, camera
+
+    def _load_image(
+        self,
+        image_name: str,
+        target_width: int,
+        target_height: int,
+    ) -> mx.array:
+        extensions = [".png", ".jpg", ".jpeg"]
+
+        path = None
+        for ext in extensions:
+            candidate_path = os.path.join(self.images_folder_path, image_name + ext)
+            if os.path.exists(candidate_path):
+                path = candidate_path
+                break
+
+        if path is None:
+            raise FileNotFoundError(f"No image found for {image_name} with extensions {extensions}")
+
+        img = cv2.imread(path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        # Resize image if the scale factor is not 1
+        if self.scale != 1:
+            img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_AREA)
+
+        return mx.array(img / 255.0, dtype=mx.float16)
