@@ -289,14 +289,14 @@ class ColmapRunner:
         sh_coeffs = torch.cat([sh_dc.unsqueeze(1), sh_rest], dim=1)  # (N, 16, 3)
         scene_extent = torch.norm(positions.max(dim=0).values - positions.min(dim=0).values)
         base_sigma = torch.clamp(scene_extent / np.sqrt(float(n_points)), min=1e-4)
-        scales = base_sigma.expand(n_points, 1).repeat(1, 3)
+        scales = base_sigma.expand(n_points, 1).repeat(1, 3) * 0.000001
 
         quaternions = torch.zeros((n_points, 4), dtype=torch.float32)
         quaternions[:, 0] = 1.0
 
         opacities = torch.full(
             (n_points, 1),
-            fill_value=1,
+            fill_value=0.1,
             dtype=torch.float32,
         )
 

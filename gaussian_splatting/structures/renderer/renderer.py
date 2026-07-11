@@ -91,8 +91,6 @@ class Renderer:
             camera=camera,
         )
 
-        mx.eval(image)
-
         return image
 
     def _transform_positions_to_camera_space(
@@ -122,6 +120,14 @@ class Renderer:
 
         camera_means = gaussians.positions
         depths = -camera_means[:, 2]
+
+        # Cull Gaussians behind the camera (depth ≤ 0 produces invalid projections)
+        valid_mask = depths > 0.0
+        valid_indices = mx.array(np.where(np.array(valid_mask))[0], dtype=mx.int32)
+        if valid_indices.shape[0] == 0:
+            return None
+        gaussians = gaussians[valid_indices]
+        depths = depths[valid_indices]
 
         means_2d = mx.stack(
             [

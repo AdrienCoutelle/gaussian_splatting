@@ -1,14 +1,9 @@
-training_images_path: datasets/lego/train
-poses_json_path: datasets/lego/poses_colmap.json
-intrinsics_json_path: datasets/lego/intrinsics.json
-ply_path: datasets/lego/gaussians.ply
+training_images_path: datasets/lego_low/train
+poses_json_path: datasets/lego_low/poses_colmap.json
+intrinsics_json_path: datasets/lego_low/intrinsics.json
+ply_path: datasets/lego_low/gaussians.ply
 max_sh_degree: 1
 scale: 1
-
-renderer_config:
-  focal_length: 200
-  width: 600
-  height: 400
 
 trainer_config:
   epochs: 1000
