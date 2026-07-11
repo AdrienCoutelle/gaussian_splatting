@@ -26,13 +26,6 @@ def _evaluate_sh(
     sh_coeffs: mx.array,
     directions: mx.array,
 ) -> mx.array:
-    """
-    Evaluate spherical harmonics at unit viewing directions.
-
-    :param sh_coeffs: SH coefficients of shape (N, num_coeffs, 3), supporting degrees 0–3.
-    :param directions: Unit viewing directions of shape (N, 3), from Gaussian toward the camera.
-    :return: RGB colors of shape (N, 3), clamped to [0, 1].
-    """
     num_coeffs = sh_coeffs.shape[1]
 
     result = _SH_C0 * sh_coeffs[:, 0, :]  # (N, 3)

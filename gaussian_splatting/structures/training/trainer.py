@@ -14,6 +14,7 @@ from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.renderer.rasterizer import Rasterizer
 from gaussian_splatting.structures.renderer.renderer import Renderer
+from gaussian_splatting.utils.differentiability_check import check_renderer_differentiability
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_saver import PLYSaver
 from gaussian_splatting.utils.profiler import profile
@@ -49,6 +50,8 @@ class Trainer:
         self.dataset = dataset
         self.output_folder = output_folder
         self.configuration = configuration
+
+        check_renderer_differentiability(self.renderer)
 
         os.makedirs(output_folder, exist_ok=True)
 

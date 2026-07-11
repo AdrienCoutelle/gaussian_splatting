@@ -35,15 +35,9 @@ class RendererConfig(BaseModel):
     height: int
     focal_length: float
 
-    near_plane: float = 1e-4
-    covariance_regularization: float = 0.3
-    max_gaussians_per_tile: int = 4000
-    sigma_cut: float = 12.0
-    eps: float = 1e-3
     gaussian_extent: float = 3.0
     tile_size: int = 16
     max_gaussians_per_batch: int = 1024
-    use_checkpointing: bool = False
 
 
 @profile
@@ -92,10 +86,14 @@ class Renderer:
         if screen_space_gaussians is None:
             return mx.zeros((camera.h, camera.w, 3), dtype=mx.float32)
 
-        return self._run_rasterization(
+        image = self._run_rasterization(
             gaussians=screen_space_gaussians,
             camera=camera,
         )
+
+        mx.eval(image)
+
+        return image
 
     def _transform_positions_to_camera_space(
         self,
