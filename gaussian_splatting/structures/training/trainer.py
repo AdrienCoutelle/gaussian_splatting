@@ -6,6 +6,7 @@ import mlx.core as mx
 import mlx.optimizers as opt
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
+from pygame import key
 from tqdm import tqdm
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
@@ -20,11 +21,21 @@ from gaussian_splatting.utils.tensorboard import TensorBoardWriter
 logger = Logger("TRAINER")
 
 
+class LearningRatesConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    lr_positions: float
+    lr_opacities: float
+    lr_scales: float
+    lr_quaternions: float
+    lr_sh_coeffs: float
+
+
 class TrainerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     epochs: Annotated[int, Field(gt=0)]
-    learning_rate: float = 1e-3
+    learning_rates: LearningRatesConfig
     save_every_n_epochs: int = 10
     render_scale: Annotated[float, Field(gt=0.0, le=1.0)] = 1.0
     gradient_accumulation_steps: Annotated[int, Field(gt=0)] = 1
@@ -32,7 +43,7 @@ class TrainerConfig(BaseModel):
     log_every_n_epochs: int = 5  # log metrics + image to TensorBoard every N epochs
 
     # Simplified Densification Settings
-    densification_interval: int = 10  # Run densification every N steps
+    densification_interval: int = 50  # Run densification every N steps
     prune_opacity_threshold: float = 0.005
     densify_grad_threshold: float = 0.0002
     split_scale_threshold: float = 0.01
@@ -69,12 +80,22 @@ class Trainer:
             "opacities": mx.array(gaussians_collection.opacities, dtype=mx.float32),
         }
 
-        self.optimizer = opt.Adam(learning_rate=configuration.learning_rate)
+        self.optimizers = {
+            "positions": opt.Adam(learning_rate=configuration.learning_rates.lr_positions),
+            "opacities": opt.Adam(learning_rate=configuration.learning_rates.lr_opacities),
+            "scales": opt.Adam(learning_rate=configuration.learning_rates.lr_scales),
+            "quaternions": opt.Adam(learning_rate=configuration.learning_rates.lr_quaternions),
+            "sh_coeffs": opt.Adam(learning_rate=configuration.learning_rates.lr_sh_coeffs),
+        }
 
         # Gradient and step accumulation variables
         num_gaussians = self.params["positions"].shape[0]
         self.pos_grad_accum = mx.zeros((num_gaussians,), dtype=mx.float32)
         self.denom = mx.zeros((num_gaussians,), dtype=mx.float32)
+
+        # Track maximum screen space size in pixels for each Gaussian
+        self.max_pixel_sizes = mx.zeros((num_gaussians,), dtype=mx.float32)
+
         self.step_count = 0
 
     def run(self) -> None:
@@ -87,6 +108,43 @@ class Trainer:
             self.tensorboard_writer.log_scalar("Loss/train_epoch", avg_loss, epoch)
 
         self.tensorboard_writer.close()
+
+    def _estimate_pixel_sizes(self, positions: mx.array, scales: mx.array, camera) -> mx.array:
+        """Estimates the projected screen space size (radius) of Gaussians in pixels."""
+        # 1. Resolve camera center coordinates in world space
+        if hasattr(camera, "camera_center"):
+            cam_center = mx.array(camera.camera_center, dtype=mx.float32)
+        elif hasattr(camera, "position"):
+            cam_center = mx.array(camera.position, dtype=mx.float32)
+        else:
+            cam_center = mx.zeros((3,), dtype=mx.float32)
+
+        # 2. Get focal length in pixels
+        if hasattr(camera, "focal_x"):
+            focal = float(camera.focal_x)
+        elif hasattr(camera, "FocalX"):
+            focal = float(camera.FocalX)
+        elif hasattr(camera, "fov_x") and hasattr(camera, "image_width"):
+            fov_x = float(camera.fov_x)
+            # If fov is in degrees, convert to radians
+            if fov_x > 3.14159:
+                fov_x = fov_x * np.pi / 180.0
+            width = float(camera.image_width)
+            focal = width / (2.0 * np.tan(fov_x / 2.0))
+        else:
+            focal = 60.0  # Fallback value
+
+        # 3. Calculate distance (depth approximation) to camera center
+        delta = positions - cam_center
+        depths = mx.linalg.norm(delta, axis=-1)
+        depths = mx.maximum(depths, 1e-5)  # Avoid division by zero
+
+        # 4. Extract maximum scale value from 3D log scales
+        max_scale_3d = mx.exp(mx.max(scales, axis=-1))
+
+        # 5. Approximate screen space radius in pixels: (3D scale * focal length) / depth
+        pixel_sizes = (max_scale_3d * focal) / depths
+        return pixel_sizes
 
     def _run_epoch(
         self,
@@ -131,8 +189,22 @@ class Trainer:
             epoch_loss += loss.item()
             num_rendered += 1
 
-            self.optimizer.update(self.params, grads)
-            mx.eval(self.params, self.optimizer.state)
+            for k, optimizer in self.optimizers.items():
+                # Wrap the parameter and gradient in single-item dictionaries
+                param_dict = {k: self.params[k]}
+                grad_dict = {k: grads[k]}
+
+                # MLX modifies param_dict in-place using its .update() method
+                optimizer.update(param_dict, grad_dict)
+
+                # Store the updated array back into your parameters
+                self.params[k] = param_dict[k]
+
+            # Estimate pixel sizes for the current view and track the maximum observed size
+            current_pixel_sizes = self._estimate_pixel_sizes(self.params["positions"], self.params["scales"], camera)
+            self.max_pixel_sizes = mx.maximum(self.max_pixel_sizes, current_pixel_sizes)
+
+            mx.eval(self.params, self.max_pixel_sizes)
 
             # Accumulate spatial position gradient norms
             pos_grads = grads["positions"]
@@ -153,12 +225,18 @@ class Trainer:
         grads_norm = self.pos_grad_accum / mx.maximum(self.denom, 1.0)
 
         # 1. Identify Gaussians to prune
-        should_prune = self.params["opacities"].squeeze() < self.configuration.prune_opacity_threshold
+        opacity_prune = self.params["opacities"].squeeze() < self.configuration.prune_opacity_threshold
+
+        # New size-based conditions
+        too_big = self.max_pixel_sizes > 20.0
+        too_small = self.max_pixel_sizes < 0.1
+
+        should_prune = opacity_prune | too_big | too_small
 
         # 2. Identify Gaussians to clone or split based on average gradient
         should_densify = grads_norm > self.configuration.densify_grad_threshold
 
-        # We assume scales are stored as log-scales (standard in 3DGS)
+        # Assume scales are stored as log-scales (standard in 3DGS)
         split_cond = mx.max(mx.exp(self.params["scales"]), axis=-1) > self.configuration.split_scale_threshold
 
         should_split = should_densify & split_cond & ~should_prune
@@ -168,6 +246,10 @@ class Trainer:
         should_prune_np = np.array(should_prune)
         should_split_np = np.array(should_split)
         should_clone_np = np.array(should_clone)
+
+        too_big_np = np.array(too_big)
+        too_small_np = np.array(too_small)
+        opacity_prune_np = np.array(opacity_prune)
 
         indices_seq_np = np.arange(N)
         keep_idx_np = indices_seq_np[~should_prune_np & ~should_split_np]
@@ -254,6 +336,7 @@ class Trainer:
         # Reset tracking registers for the modified shape
         self.pos_grad_accum = mx.zeros((new_num_gaussians,), dtype=mx.float32)
         self.denom = mx.zeros((new_num_gaussians,), dtype=mx.float32)
+        self.max_pixel_sizes = mx.zeros((new_num_gaussians,), dtype=mx.float32)
 
         # Recursive updater to process the nested optimizer states dynamically
         def update_state(state, indices, original_size):
@@ -267,13 +350,15 @@ class Trainer:
                 return [update_state(v, indices, original_size) for v in state]
             return state
 
-        self.optimizer.state = update_state(self.optimizer.state, new_indices, N)
+        for k, optimizer in self.optimizers.items():
+            optimizer.state = update_state(optimizer.state, new_indices, N)
 
-        mx.eval(self.params, self.optimizer.state)
+        mx.eval(self.params, self.max_pixel_sizes)
 
         logger.info(
             f"Adaptive density control complete: {N} -> {new_num_gaussians} Gaussians "
-            f"(Pruned: {should_prune_np.sum()}, Cloned: {num_clone}, Split: {num_split})"
+            f"(Pruned total: {should_prune_np.sum()} [Opacity: {opacity_prune_np.sum()}, Too Big: {too_big_np.sum()}, Too Small: {too_small_np.sum()}], "
+            f"Cloned: {num_clone}, Split: {num_split})"
         )
 
     def _loss_fn(
@@ -281,10 +366,10 @@ class Trainer:
         image: mx.array,
         gt_image: mx.array,
     ) -> mx.array:
-        l1 = mx.mean(mx.abs(image - gt_image))
-        ssim_loss = 1.0 - ssim(image, gt_image)
+        return mx.mean(mx.abs(image - gt_image))
+        # ssim_loss = 1.0 - ssim(image, gt_image)
 
-        return 0.8 * l1 + 0.2 * ssim_loss
+        # return 0.8 * l1 + 0.2 * ssim_loss
 
     def _build_gaussian_collection(
         self,
