@@ -15,6 +15,7 @@ class GaussianSplattingDataset:
         poses_path: str,
         intrinsics_path: str,
         scale: int = 1,
+        validation_index: int = 0,
     ) -> None:
         self.images_folder_path = images_folder_path
         self.scale = scale
@@ -27,7 +28,7 @@ class GaussianSplattingDataset:
 
         intrinsics_by_id: dict[int, dict] = {cam["camera_id"]: cam for cam in intrinsics_data}
 
-        self.items: list[tuple[str, Camera]] = []
+        items: list[tuple[str, Camera]] = []
         for entry in poses_data:
             intrinsics = intrinsics_by_id[entry["camera_id"]]
             pose = self._compute_pose(
@@ -46,7 +47,7 @@ class GaussianSplattingDataset:
             focal_length = ((intrinsics["fx"] + intrinsics["fy"]) / 2.0) / self.scale
 
             image_name = os.path.splitext(entry["name"])[0]
-            self.items.append(
+            items.append(
                 (
                     image_name,
                     Camera(
@@ -57,6 +58,19 @@ class GaussianSplattingDataset:
                     ),
                 )
             )
+
+        if validation_index >= len(items):
+            raise ValueError("Wrong index")
+
+        self.items = []
+        self.validation_item = None
+        for i, item in enumerate(items):
+            if i == validation_index:
+                image_name, camera = item
+                image = self._load_image(image_name, camera.width, camera.height)
+                self.validation_item = (image, camera)
+            else:
+                self.items.append(item)
 
     def __len__(self) -> int:
         return len(self.items)

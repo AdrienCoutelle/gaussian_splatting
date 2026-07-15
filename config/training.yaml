@@ -7,7 +7,12 @@ scale: 1
 
 trainer_config:
   epochs: 1000
-  learning_rate: 1.0e-4
+  learning_rates:
+    lr_positions: 16e-5
+    lr_opacities: 5e-2
+    lr_scales: 5e-3
+    lr_quaternions: 1e-3
+    lr_sh_coeffs: 25e-4
   gradient_accumulation_steps: 8
   max_gaussians_per_step: 3000
   log_every_n_epochs: 5

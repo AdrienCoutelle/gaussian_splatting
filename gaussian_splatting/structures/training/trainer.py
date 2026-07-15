@@ -1,7 +1,7 @@
+import datetime
 import os
 from typing import Annotated
 
-import cv2
 import mlx.core as mx
 import mlx.optimizers as opt
 import numpy as np
@@ -104,7 +104,31 @@ class Trainer:
 
             self.tensorboard_writer.log_scalar("Loss/train_epoch", avg_loss, epoch)
 
+            self._run_validation(epoch)
+
         self.tensorboard_writer.close()
+
+    def _run_validation(
+        self,
+        epoch: int,
+    ) -> None:
+        gt_image, camera = self.dataset.validation_item
+
+        gaussians = self._build_gaussian_collection(self.params)
+
+        t0 = datetime.datetime.now()
+        image = self.renderer.render_tensor(
+            camera=camera,
+            gaussians=gaussians,
+        )
+        mx.eval(image)
+        render_time = (datetime.datetime.now() - t0).total_seconds()
+
+        val_loss = self._loss_fn(image, gt_image)
+        self.tensorboard_writer.log_scalar("Loss/validation", val_loss.item(), epoch)
+        self.tensorboard_writer.log_scalar("Stats/num_gaussians", self.params["positions"].shape[0], epoch)
+        self.tensorboard_writer.log_scalar("Stats/render_time", render_time, epoch)
+        self.tensorboard_writer.log_image("Validation/Image", image, epoch)
 
     def _estimate_pixel_sizes(self, positions: mx.array, scales: mx.array, camera) -> mx.array:
         """Estimates the projected screen space size (radius) of Gaussians in pixels."""
@@ -158,31 +182,18 @@ class Trainer:
                 camera=camera,
                 gaussians=gaussians,
             )
-            cv2.imwrite(
-                "image.jpg",
-                (np.array(image) * 255).astype("uint8")[..., ::-1],
-            )
             return self._loss_fn(image, gt_image)
 
         loss_and_grad_fn = mx.value_and_grad(loss_fn)
 
-        for step, idx in enumerate(indices):
+        for idx in tqdm(indices, desc=f"Running epoch {epoch}", leave=False):
             self.step_count += 1
-            logger.info(
-                f"Epoch {epoch}, Step {step + 1}/{len(self.dataset)}: Rendering and computing loss for image {idx}."
-            )
             gt_image, camera = self.dataset[idx]
-
-            cv2.imwrite(
-                "gt_image.jpg",
-                (np.array(gt_image) * 255).astype("uint8")[..., ::-1],
-            )
 
             loss, grads = loss_and_grad_fn(self.params, camera, gt_image)
 
             mx.eval(loss)
 
-            logger.info(f"Epoch {epoch}, Step {step + 1}/{len(self.dataset)}: Loss = {loss.item():.6f}")
             epoch_loss += loss.item()
             num_rendered += 1
 
@@ -213,8 +224,6 @@ class Trainer:
             if self.step_count % self.configuration.densification_interval == 0:
                 self._refine_gaussians()
 
-            logger.info(f"Gradients: {[g.mean().item() for g in grads.values()]}")
-
         return epoch_loss / num_rendered if num_rendered > 0 else 0.0
 
     def _refine_gaussians(self) -> None:
@@ -243,10 +252,6 @@ class Trainer:
         should_prune_np = np.array(should_prune)
         should_split_np = np.array(should_split)
         should_clone_np = np.array(should_clone)
-
-        too_big_np = np.array(too_big)
-        too_small_np = np.array(too_small)
-        opacity_prune_np = np.array(opacity_prune)
 
         indices_seq_np = np.arange(N)
         keep_idx_np = indices_seq_np[~should_prune_np & ~should_split_np]
@@ -351,13 +356,6 @@ class Trainer:
             optimizer.state = update_state(optimizer.state, new_indices, N)
 
         mx.eval(self.params, self.max_pixel_sizes)
-
-        logger.info(
-            f"Adaptive density control complete: {N} -> {new_num_gaussians} Gaussians "
-            f"(Pruned total: {should_prune_np.sum()} [Opacity: {opacity_prune_np.sum()}, "
-            f"Too Big: {too_big_np.sum()}, Too Small: {too_small_np.sum()}], "
-            f"Cloned: {num_clone}, Split: {num_split})"
-        )
 
     def _loss_fn(
         self,
