@@ -116,7 +116,7 @@ class GaussianSplattingDataset:
         pose[:3, 3] = C_world
 
         # COLMAP convention (Y down, Z forward) → OpenGL convention (Y up, -Z forward)
-        flip = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)
+        flip = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)  # TODO: This should not be done here.
         pose = pose @ flip
 
         return mx.array(pose, dtype=mx.float32)
@@ -127,7 +127,11 @@ class GaussianSplattingDataset:
         target_width: int,
         target_height: int,
     ) -> mx.array:
-        extensions = [".png", ".jpg", ".jpeg"]
+        extensions = [
+            ".png",
+            ".jpg",
+            ".jpeg",
+        ]
 
         path = None
         for ext in extensions:
@@ -143,7 +147,7 @@ class GaussianSplattingDataset:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         # Resize image if the scale factor is not 1
-        if self.scale != 1:
+        if self.scale != 1:  # TODO: Remove scaling.
             img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_AREA)
 
         return mx.array(img / 255.0, dtype=mx.float16)

@@ -39,3 +39,5 @@ This project implements the method described in:
 - Recreate the dataset with 128x128 or 256x256 images.
 - In the rasterizer, try to compile some methods. To do so the inputs have to have the same shape. Use a max_gaussians_per_tile parameter. If less than max_gaussians_per_tile gaussians in the tile, pad with transparent gaussians far away.
 - Clean the code. The thing where the size of the gaussians could be handled by another class? It seems it is done twice (or two things are very similar).
+- See camera conventions, colmap, gaussian splatting. Make a clear choice, maybe write it in the readme to be sure. The conversion should be done in the colmap wrapper, not in the dataset class.
+- Restore some sh for more precision.

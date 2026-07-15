@@ -12,7 +12,9 @@ from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.renderer.renderer import Renderer
 from gaussian_splatting.utils.differentiability_check import check_renderer_differentiability
+from gaussian_splatting.utils.image import stack_images_horizontally
 from gaussian_splatting.utils.logger import Logger
+from gaussian_splatting.utils.ply.ply_saver import PLYSaver
 from gaussian_splatting.utils.profiler import profile
 from gaussian_splatting.utils.tensorboard import TensorBoardWriter
 
@@ -34,7 +36,7 @@ class TrainerConfig(BaseModel):
 
     epochs: Annotated[int, Field(gt=0)]
     learning_rates: LearningRatesConfig
-    save_every_n_epochs: int = 10
+    save_every_n_epochs: int = 50
     render_scale: Annotated[float, Field(gt=0.0, le=1.0)] = 1.0
     gradient_accumulation_steps: Annotated[int, Field(gt=0)] = 1
     max_gaussians_per_step: int = 0  # 0 = no limit; positive = random subsample per step
@@ -65,6 +67,7 @@ class Trainer:
         check_renderer_differentiability(self.renderer)
 
         os.makedirs(output_folder, exist_ok=True)
+        os.makedirs(os.path.join(output_folder, "checkpoints"))
 
         tb_log_dir = os.path.join(output_folder, "tensorboard")
         self.tensorboard_writer = TensorBoardWriter(tb_log_dir)
@@ -106,7 +109,25 @@ class Trainer:
 
             self._run_validation(epoch)
 
+            if epoch % self.configuration.save_every_n_epochs == 0:
+                self._save_checkpoint(epoch)
+
         self.tensorboard_writer.close()
+
+    def _save_checkpoint(
+        self,
+        epoch: int | None = None,
+    ) -> None:
+        gaussians = self._build_gaussian_collection(self.params)
+
+        file_name = (
+            f"checkpoint_epoch_{epoch}"
+            if epoch is not None
+            else "checkpoint_final"
+        )  # fmt:skip
+
+        ply_saver = PLYSaver(os.path.join(self.output_folder, "checkpoints", f"{file_name}.ply"))
+        ply_saver.save_gaussians(gaussians)
 
     def _run_validation(
         self,
@@ -125,10 +146,15 @@ class Trainer:
         render_time = (datetime.datetime.now() - t0).total_seconds()
 
         val_loss = self._loss_fn(image, gt_image)
+        stacked_validation_image = stack_images_horizontally(
+            left_image=np.array(gt_image),
+            right_image=np.array(image),
+        )
+
         self.tensorboard_writer.log_scalar("Loss/validation", val_loss.item(), epoch)
-        self.tensorboard_writer.log_scalar("Stats/num_gaussians", self.params["positions"].shape[0], epoch)
+        self.tensorboard_writer.log_scalar("Stats/num_gaussians(kilo)", self.params["positions"].shape[0] / 1000, epoch)
         self.tensorboard_writer.log_scalar("Stats/render_time", render_time, epoch)
-        self.tensorboard_writer.log_image("Validation/Image", image, epoch)
+        self.tensorboard_writer.log_image("Validation/Image", stacked_validation_image, epoch)
 
     def _estimate_pixel_sizes(self, positions: mx.array, scales: mx.array, camera) -> mx.array:
         """Estimates the projected screen space size (radius) of Gaussians in pixels."""
