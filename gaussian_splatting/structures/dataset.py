@@ -58,6 +58,14 @@ class GaussianSplattingDataset:
                 )
             )
 
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, idx: int) -> tuple[mx.array, Camera]:
+        image_name, camera = self.items[idx]
+        image = self._load_image(image_name, camera.width, camera.height)
+        return image, camera
+
     @staticmethod
     def _compute_pose(
         qw: float,
@@ -98,14 +106,6 @@ class GaussianSplattingDataset:
         pose = pose @ flip
 
         return mx.array(pose, dtype=mx.float32)
-
-    def __len__(self) -> int:
-        return len(self.items)
-
-    def __getitem__(self, idx: int) -> tuple[mx.array, Camera]:
-        image_name, camera = self.items[idx]
-        image = self._load_image(image_name, camera.width, camera.height)
-        return image, camera
 
     def _load_image(
         self,

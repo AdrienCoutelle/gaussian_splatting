@@ -6,13 +6,11 @@ import mlx.core as mx
 import mlx.optimizers as opt
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
-from pygame import key
 from tqdm import tqdm
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.renderer.renderer import Renderer
-from gaussian_splatting.structures.training.utils import ssim
 from gaussian_splatting.utils.differentiability_check import check_renderer_differentiability
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.profiler import profile
@@ -104,7 +102,6 @@ class Trainer:
         for epoch in tqdm(range(1, self.configuration.epochs + 1), desc="Training"):
             avg_loss = self._run_epoch(epoch)
 
-            logger.info(f"Epoch {epoch}/{self.configuration.epochs} completed — Avg Loss: {avg_loss:.6f}")
             self.tensorboard_writer.log_scalar("Loss/train_epoch", avg_loss, epoch)
 
         self.tensorboard_writer.close()
@@ -357,7 +354,8 @@ class Trainer:
 
         logger.info(
             f"Adaptive density control complete: {N} -> {new_num_gaussians} Gaussians "
-            f"(Pruned total: {should_prune_np.sum()} [Opacity: {opacity_prune_np.sum()}, Too Big: {too_big_np.sum()}, Too Small: {too_small_np.sum()}], "
+            f"(Pruned total: {should_prune_np.sum()} [Opacity: {opacity_prune_np.sum()}, "
+            f"Too Big: {too_big_np.sum()}, Too Small: {too_small_np.sum()}], "
             f"Cloned: {num_clone}, Split: {num_split})"
         )
 
@@ -367,9 +365,6 @@ class Trainer:
         gt_image: mx.array,
     ) -> mx.array:
         return mx.mean(mx.abs(image - gt_image))
-        # ssim_loss = 1.0 - ssim(image, gt_image)
-
-        # return 0.8 * l1 + 0.2 * ssim_loss
 
     def _build_gaussian_collection(
         self,
