@@ -139,14 +139,14 @@ class Profiler:
             method_stats.sort(key=lambda x: x[2], reverse=True)
 
             message += (
-                "\n" + f"{'Method':<30} {'Calls':>8} {'Total (s)':>12} {'Avg (s)':>12} {'Min (s)':>12} {'Max (s)':>12}"
+                "\n" + f"{'Method':<40} {'Calls':>8} {'Total (s)':>12} {'Avg (s)':>12} {'Min (s)':>12} {'Max (s)':>12}"
             )
             message += "\n" + "- " * 40
 
             for method_name, _, total, count, avg, min_time, max_time in method_stats:
                 message += (
                     "\n"
-                    + f"{method_name:<30} {count:>8} {total:>12.6f} {avg:>12.6f} {min_time:>12.6f} {max_time:>12.6f}"
+                    + f"{method_name:<40} {count:>8} {total:>12.6f} {avg:>12.6f} {min_time:>12.6f} {max_time:>12.6f}"
                 )
 
         message += "\n" + "=" * 80 + "\n"

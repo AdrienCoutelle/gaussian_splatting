@@ -1,15 +1,15 @@
 from dataclasses import dataclass
 
-import torch
+import mlx.core as mx
 
 
 @dataclass
 class Gaussian:
-    position: torch.Tensor
-    quaternion: torch.Tensor  # (4,) as [w, x, y, z]
-    scale: torch.Tensor  # (3,)
-    sh_coeffs: torch.Tensor  # (num_sh_coeffs, 3) where num_sh_coeffs = (sh_degree + 1)^2
-    opacity: torch.Tensor
+    position: mx.array
+    quaternion: mx.array  # (4,) as [w, x, y, z]
+    scale: mx.array  # (3,)
+    sh_coeffs: mx.array  # (num_sh_coeffs, 3) where num_sh_coeffs = (sh_degree + 1)^2
+    opacity: mx.array
 
 
 class GaussianCollection:
@@ -17,20 +17,20 @@ class GaussianCollection:
         self,
         gaussians: list[Gaussian],
     ) -> None:
-        self.positions = torch.stack([g.position for g in gaussians])
-        self.quaternions = torch.stack([g.quaternion for g in gaussians])
-        self.scales = torch.stack([g.scale for g in gaussians])
-        self.sh_coeffs = torch.stack([g.sh_coeffs for g in gaussians])
-        self.opacities = torch.stack([g.opacity for g in gaussians])
+        self.positions = mx.stack([g.position for g in gaussians])
+        self.quaternions = mx.stack([g.quaternion for g in gaussians])
+        self.scales = mx.stack([g.scale for g in gaussians])
+        self.sh_coeffs = mx.stack([g.sh_coeffs for g in gaussians])
+        self.opacities = mx.stack([g.opacity for g in gaussians])
 
     @classmethod
     def from_tensors(
         cls,
-        positions: torch.Tensor,
-        quaternions: torch.Tensor,
-        scales: torch.Tensor,
-        sh_coeffs: torch.Tensor,
-        opacities: torch.Tensor,
+        positions: mx.array,
+        quaternions: mx.array,
+        scales: mx.array,
+        sh_coeffs: mx.array,
+        opacities: mx.array,
     ) -> "GaussianCollection":
         collection = cls.__new__(cls)
         collection.positions = positions
@@ -56,3 +56,12 @@ class GaussianCollection:
 
     def __len__(self) -> int:
         return int(self.positions.shape[0])
+
+    def __getitem__(self, idx):
+        return GaussianCollection.from_tensors(
+            positions=self.positions[idx],
+            quaternions=self.quaternions[idx],
+            scales=self.scales[idx],
+            sh_coeffs=self.sh_coeffs[idx],
+            opacities=self.opacities[idx],
+        )

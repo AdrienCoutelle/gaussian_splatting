@@ -1,9 +1,8 @@
 from typing import Annotated
 
-import torch
 from pydantic import Field
 
-from gaussian_splatting.structures.gaussian import Gaussian
+from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import BaseInferencePipeline
 from gaussian_splatting.structures.inference_pipelines.interactive_pipeline import (
     InteractiveInferencePipeline,
@@ -17,7 +16,7 @@ from gaussian_splatting.structures.inference_pipelines.single_image_pipeline imp
     SingleImageInferencePipeline,
     SingleImageInferencePipelineParams,
 )
-from gaussian_splatting.structures.renderers.base_renderer import BaseRenderer
+from gaussian_splatting.structures.renderer.renderer import Renderer
 
 PipelineConfig = Annotated[
     (
@@ -38,10 +37,9 @@ class InferencePipelineFactory:
 
     @staticmethod
     def create(
-        renderer: BaseRenderer,
-        gaussians: list[Gaussian],
+        renderer: Renderer,
+        gaussians: GaussianCollection,
         configuration: PipelineConfig,
-        device: torch.device,
         output_folder: str,
         epoch: int | None = None,
     ) -> BaseInferencePipeline:
@@ -52,6 +50,5 @@ class InferencePipelineFactory:
             gaussians=gaussians,
             configuration=configuration,
             output_folder=output_folder,
-            device=device,
             epoch=epoch,
         )

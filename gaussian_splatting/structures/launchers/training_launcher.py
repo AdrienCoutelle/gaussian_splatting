@@ -1,10 +1,11 @@
+import json
 import os
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
-from gaussian_splatting.structures.device import Device
-from gaussian_splatting.structures.renderers.factory import RendererConfig, RendererFactory
+from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
 from gaussian_splatting.utils.colmap import ColmapConfig, ColmapRunner
 from gaussian_splatting.utils.image import is_image
@@ -22,8 +23,9 @@ class TrainingConfig(BaseModel):
     poses_json_path: str
     intrinsics_json_path: str
     ply_path: str
+    max_sh_degree: int = 1
+    scale: float = 1
 
-    renderer_config: RendererConfig
     trainer_config: TrainerConfig
     output_folder: str
 
@@ -34,7 +36,6 @@ class TrainingLauncher:
         configuration: TrainingConfig,
     ) -> None:
         self.configuration = configuration
-        device = Device.get()
 
         if not os.path.exists(self.configuration.training_images_path):
             raise FileNotFoundError(f"Training images folder does not exist: {self.configuration.training_images_path}")
@@ -54,25 +55,36 @@ class TrainingLauncher:
             images_folder_path=self.configuration.training_images_path,
             poses_path=self.configuration.poses_json_path,
             intrinsics_path=self.configuration.intrinsics_json_path,
+            scale=self.configuration.scale,
         )
         logger.info(f"Dataset created with {len(dataset)} entries.")
 
         ply_handler = PLYLoader(self.configuration.ply_path)
         ply_handler.log_info()
-        gaussian_collection = ply_handler.get_gaussians()
+        gaussian_collection = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
 
-        renderer = RendererFactory.create_renderer(
-            configuration=self.configuration.renderer_config,
-            device=device,
-        )
+        renderer = Renderer(self._build_renderer_config())
+
+        init_date = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_folder = os.path.join(self.configuration.output_folder, init_date)
 
         self.trainer = Trainer(
             gaussians_collection=gaussian_collection,
             renderer=renderer,
             dataset=dataset,
-            output_folder=self.configuration.output_folder,
+            output_folder=output_folder,
             configuration=self.configuration.trainer_config,
-            device=device,
+        )
+
+    def _build_renderer_config(self) -> RendererConfig:
+        with open(self.configuration.intrinsics_json_path) as f:
+            intrinsics_data: list[dict] = json.load(f)
+        intrinsics = intrinsics_data[0]
+        scale = self.configuration.scale
+        return RendererConfig(
+            width=int(intrinsics["width"] // scale),
+            height=int(intrinsics["height"] // scale),
+            focal_length=((intrinsics["fx"] + intrinsics["fy"]) / 2.0) / scale,
         )
 
     def run_colmap_if_needed(self) -> None:
@@ -112,6 +124,7 @@ class TrainingLauncher:
         try:
             self.trainer.run()
         except KeyboardInterrupt:
-            logger.info("Training interrupted by user.")
+            logger.info("Training interrupted by user. Saving checkpoint...")
+            self.trainer._save_checkpoint()
         finally:
             Profiler.print_stats()

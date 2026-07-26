@@ -1,14 +1,18 @@
-from dataclasses import dataclass
-
-import torch
+import mlx.core as mx
 
 
-@dataclass
 class Camera:
-    pose: torch.Tensor
-    focal_length: float
-    width: int
-    height: int
+    def __init__(
+        self,
+        pose: mx.array,
+        focal_length: float,
+        width: int,
+        height: int,
+    ):
+        self.pose = pose
+        self.focal_length = focal_length
+        self.width = width
+        self.height = height
 
     @property
     def f(self) -> float:
@@ -21,3 +25,10 @@ class Camera:
     @property
     def w(self) -> int:
         return self.width
+
+    @property
+    def principal_point(self) -> tuple[float, float]:
+        return (
+            self.width / 2.0,
+            self.height / 2.0,
+        )

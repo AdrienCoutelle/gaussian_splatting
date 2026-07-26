@@ -18,11 +18,13 @@ class PLYSaver:
         self,
         gaussians_collection: GaussianCollection,
     ) -> None:
-        positions = gaussians_collection.positions.detach().cpu().numpy()  # (N, 3)
-        quaternions = gaussians_collection.quaternions.detach().cpu().numpy()  # (N, 4)
-        scales = gaussians_collection.scales.detach().cpu().numpy()  # (N, 3)
-        sh_coeffs = gaussians_collection.sh_coeffs.detach().cpu().numpy()  # (N, num_sh, 3)
-        opacities = gaussians_collection.opacities.detach().cpu().numpy()  # (N, 1)
+        positions = np.array(gaussians_collection.positions, dtype=np.float32)  # (N, 3)
+        quaternions = np.array(gaussians_collection.quaternions, dtype=np.float32)  # (N, 4)
+        scales = np.array(gaussians_collection.scales, dtype=np.float32)  # (N, 3)
+        sh_coeffs = np.array(gaussians_collection.sh_coeffs, dtype=np.float32)  # (N, num_sh, 3)
+        opacities = np.array(gaussians_collection.opacities, dtype=np.float32)  # (N, 1)
+        if opacities.ndim == 1:
+            opacities = opacities[:, np.newaxis]
 
         n = positions.shape[0]
 
