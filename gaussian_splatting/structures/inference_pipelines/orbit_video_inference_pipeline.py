@@ -36,7 +36,7 @@ class OrbitPipelineInferenceParams(InferencePipelineParams):
 
     phi_freq: Annotated[float, Field(ge=0)]
 
-    center: tuple[float, float, float] | None = None
+    center: tuple[float, float, float] | Literal["mean"] = "mean"
 
 
 class OrbitVideoInferencePipeline(BaseInferencePipeline):
@@ -79,7 +79,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
         self.phi_list = None
         self._initialize_lists()
 
-        if self.configuration.center is None:
+        if self.configuration.center == "mean":
             self.configuration.center = mx.mean(self.gaussians.positions, axis=0)
 
     def _initialize_lists(self) -> None:

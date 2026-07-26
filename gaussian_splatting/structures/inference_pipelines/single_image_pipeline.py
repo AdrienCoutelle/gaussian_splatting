@@ -20,8 +20,8 @@ class SingleImageInferencePipelineParams(InferencePipelineParams):
     name: Literal["single_image"]
     model_config = ConfigDict(extra="forbid")
 
-    look_at: tuple[float, float, float]
     position: tuple[float, float, float]
+    look_at: tuple[float, float, float] | Literal["mean"] = "mean"
 
 
 class SingleImageInferencePipeline(BaseInferencePipeline):
@@ -54,6 +54,9 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
             self.output_folder,
             output_name,
         )
+
+        if self.configuration.look_at == "mean":
+            self.configuration.look_at = mx.mean(self.gaussians.positions, axis=0)
 
     def run(self) -> None:
         pose = self._compute_pose_look_at(
