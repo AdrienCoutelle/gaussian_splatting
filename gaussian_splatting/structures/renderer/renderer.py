@@ -119,7 +119,7 @@ class Renderer:
         principal_point_x, principal_point_y = camera.principal_point
 
         camera_means = gaussians.positions
-        depths = -camera_means[:, 2]
+        depths = camera_means[:, 2]
 
         # Cull Gaussians behind the camera (depth ≤ 0 produces invalid projections)
         valid_mask = depths > 0.0
@@ -132,7 +132,7 @@ class Renderer:
         means_2d = mx.stack(
             [
                 camera.f * (gaussians.positions[:, 0] / depths) + principal_point_x,
-                -camera.f * (gaussians.positions[:, 1] / depths) + principal_point_y,
+                camera.f * (gaussians.positions[:, 1] / depths) + principal_point_y,
             ],
             axis=1,
         )
@@ -142,14 +142,14 @@ class Renderer:
             [
                 camera.f / depths,
                 zeros,
-                camera.f * gaussians.positions[:, 0] / (depths**2),
+                -camera.f * gaussians.positions[:, 0] / (depths**2),
             ],
             axis=1,
         )
         row1 = mx.stack(
             [
                 zeros,
-                -camera.f / depths,
+                camera.f / depths,
                 -camera.f * gaussians.positions[:, 1] / (depths**2),
             ],
             axis=1,

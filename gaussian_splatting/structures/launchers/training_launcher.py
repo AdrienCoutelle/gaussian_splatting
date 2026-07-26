@@ -114,6 +114,7 @@ class TrainingLauncher:
             poses_filename=os.path.basename(self.configuration.poses_json_path),
             intrinsics_filename=os.path.basename(self.configuration.intrinsics_json_path),
             points_filename=os.path.basename(self.configuration.ply_path),
+            example_image_filename="example_image.png",
         )
         runner = ColmapRunner(colmap_config)
         runner.run()
