@@ -39,10 +39,12 @@ class Rasterizer:
         gaussian_extent: float,
         tile_size: int | tuple[int, int],
         max_gaussians_per_batch: int,
+        max_gaussians_per_tile: int = 1024,
     ) -> None:
         self.gaussian_extent = gaussian_extent
         self.tile_size = tile_size
         self.max_gaussians_per_batch = max_gaussians_per_batch
+        self.max_gaussians_per_tile = max_gaussians_per_tile
 
     def run(
         self,
@@ -52,8 +54,41 @@ class Rasterizer:
 
         sorted_gaussians = self._get_sorted_gaussians(gaussians)
 
+        # Retrieve arrays
+        means = sorted_gaussians.means_2d
+        colors = sorted_gaussians.colors
+        opacities = sorted_gaussians.opacities
+        covs = sorted_gaussians.covariances_2d
+
+        # Align dummy dimensions dynamically with source dimensions to prevent ValueError
+        dummy_mean = mx.zeros((1, 2), dtype=mx.float32) - 1e5
+        dummy_color = mx.zeros((1, 3), dtype=mx.float32)
+
+        if opacities.ndim == 2:
+            dummy_opacity = mx.zeros((1, 1), dtype=mx.float32)
+        else:
+            dummy_opacity = mx.zeros((1,), dtype=mx.float32)
+
+        if covs.ndim == 3:
+            dummy_cov = mx.array([[[1.0, 0.0], [0.0, 1.0]]], dtype=mx.float32)
+        else:
+            dummy_cov = mx.array([[1.0, 0.0, 1.0]], dtype=mx.float32)
+
+        # Safe concatenation along the Gaussian axis (axis=0)
+        padded_means = mx.concatenate([means, dummy_mean], axis=0)
+        padded_colors = mx.concatenate([colors, dummy_color], axis=0)
+        padded_opacities = mx.concatenate([opacities, dummy_opacity], axis=0)
+        padded_covs = mx.concatenate([covs, dummy_cov], axis=0)
+
+        # Compute conics and extents globally to minimize redundant calculations per-tile
+        padded_conics, padded_extents = self._compute_conics_and_extents(
+            padded_covs,
+            self.gaussian_extent,
+        )
+
         tiles = self._create_tiles(camera)
 
+        # Assign indices padded to self.max_gaussians_per_tile
         self._compute_tile_participation(
             sorted_gaussians,
             tiles=tiles,
@@ -64,7 +99,7 @@ class Rasterizer:
 
         patches_grid = [[None for _ in range(num_tiles_x)] for _ in range(num_tiles_y)]
 
-        # Collect rendered patches into a grid
+        # Render each tile using the static-shape compiled pathway
         for tile_y_idx in range(num_tiles_y):
             for tile_x_idx in range(num_tiles_x):
                 tile_idx = tile_y_idx * num_tiles_x + tile_x_idx
@@ -72,11 +107,15 @@ class Rasterizer:
 
                 tile_patch = self._render_single_tile(
                     tile=tile,
-                    gaussians=sorted_gaussians,
+                    padded_means=padded_means,
+                    padded_colors=padded_colors,
+                    padded_opacities=padded_opacities,
+                    padded_conics=padded_conics,
+                    padded_extents=padded_extents,
                 )
                 patches_grid[tile_y_idx][tile_x_idx] = tile_patch
 
-        # Concatenate horizontally across columns, then vertically across rows
+        # Combine patches back into the full image canvas
         rows = [mx.concatenate(row_patches, axis=1) for row_patches in patches_grid]
         image = mx.concatenate(rows, axis=0)
 
@@ -123,11 +162,6 @@ class Rasterizer:
         covariances_2d: mx.array,
         extent_scale: float,
     ) -> tuple[mx.array, mx.array]:
-        """
-        Differentiable calculation of 2D Gaussian conics and extents.
-        Supports both [N, 2, 2] and [N, 3] shapes of covariances.
-        Includes small epsilons to prevent square root NaN gradients.
-        """
         if covariances_2d.ndim == 3:
             a = covariances_2d[..., 0, 0]
             b = covariances_2d[..., 0, 1]
@@ -137,15 +171,14 @@ class Rasterizer:
             b = covariances_2d[..., 1]
             c = covariances_2d[..., 2]
 
-        # 1. Compute inverse covariance elements (conics)
+        # Inverse covariance calculations
         det = a * c - b * b
         eps = 1e-6
         det = mx.where(det < eps, eps, det)
         inv_det = 1.0 / det
         conics = mx.stack([c * inv_det, -b * inv_det, a * inv_det], axis=-1)
 
-        # 2. Compute stable extents (eigenvalues of 2D covariance)
-        # Adding 1e-10 inside the square roots avoids NaN gradients during backpropagation.
+        # Safe eigenvalues derivation
         D = (a - c) ** 2 + 4.0 * b * b
         lambda_max = 0.5 * ((a + c) + mx.sqrt(D + 1e-10))
         extents = extent_scale * mx.sqrt(lambda_max + 1e-10)
@@ -182,40 +215,76 @@ class Rasterizer:
         )
 
         np_overlap = np.array(overlap)
+        dummy_idx = len(sorted_gaussians)  # Index pointing to our appended transparent dummy Gaussian
 
         for i, tile in enumerate(tiles):
-            tile.gaussian_indices = mx.array(np.flatnonzero(np_overlap[i]), dtype=mx.int32)
+            indices = np.flatnonzero(np_overlap[i])
+            if len(indices) > self.max_gaussians_per_tile:
+                indices = indices[: self.max_gaussians_per_tile]
+
+            padding_needed = self.max_gaussians_per_tile - len(indices)
+            if padding_needed > 0:
+                padded_indices = np.concatenate([indices, np.full(padding_needed, dummy_idx, dtype=np.int32)])
+            else:
+                padded_indices = indices
+
+            tile.gaussian_indices = mx.array(padded_indices, dtype=mx.int32)
 
     def _render_single_tile(
         self,
         tile: Tile,
-        gaussians: ScreenSpaceGaussians,
+        padded_means: mx.array,
+        padded_colors: mx.array,
+        padded_opacities: mx.array,
+        padded_conics: mx.array,
+        padded_extents: mx.array,
     ) -> mx.array:
-        # Checking shape is free because tile_indices are concrete arrays with known shapes on the host
-        if tile.gaussian_indices is None or tile.gaussian_indices.shape[0] == 0:
-            return mx.zeros((tile.height, tile.width, 3), dtype=mx.float32)
+        tile_pixels = tile.generate_pixel_grid()
+        tile_indices = tile.gaussian_indices
 
-        tile_gaussians = gaussians[tile.gaussian_indices]
+        # Extract elements using the fixed index slice
+        tile_means = padded_means[tile_indices]
+        tile_colors = padded_colors[tile_indices]
+        tile_opacities = padded_opacities[tile_indices]
+        tile_conics = padded_conics[tile_indices]
+        tile_extents = padded_extents[tile_indices]
 
-        tile_means = tile_gaussians.means_2d
-        tile_colors = tile_gaussians.colors
-        tile_opacities = tile_gaussians.opacities
-
-        # Derive differentiable conics and extents stably inside the rasterizer
-        tile_conics, tile_extents = self._compute_conics_and_extents(
-            tile_gaussians.covariances_2d,
-            self.gaussian_extent,
+        # Call the static, compiled core method
+        tile_image = self._render_tile_core(
+            tile_pixels=tile_pixels,
+            tile_means=tile_means,
+            tile_conics=tile_conics,
+            tile_colors=tile_colors,
+            tile_opacities=tile_opacities,
+            tile_extents=tile_extents,
+            max_gaussians_per_tile=self.max_gaussians_per_tile,
+            max_gaussians_per_batch=self.max_gaussians_per_batch,
         )
 
-        tile_pixels = tile.generate_pixel_grid()
-        P = tile_pixels.shape[0]
+        return tile_image.reshape(tile.height, tile.width, 3)
 
+    @staticmethod
+    @mx.compile
+    def _render_tile_core(
+        tile_pixels: mx.array,
+        tile_means: mx.array,
+        tile_conics: mx.array,
+        tile_colors: mx.array,
+        tile_opacities: mx.array,
+        tile_extents: mx.array,
+        max_gaussians_per_tile: int,
+        max_gaussians_per_batch: int,
+    ) -> mx.array:
+        """
+        Compiled calculation layer. Merges offset math, conics projections,
+        and iterative blending steps into compiled GPU operations.
+        """
+        P = tile_pixels.shape[0]
         tile_image = mx.zeros((P, 3), dtype=mx.float32)
         tile_transmittance = mx.ones(P, dtype=mx.float32)
 
-        num_tile_gaussians = tile_means.shape[0]
-        for start_idx in range(0, num_tile_gaussians, self.max_gaussians_per_batch):
-            end_idx = min(start_idx + self.max_gaussians_per_batch, num_tile_gaussians)
+        for start_idx in range(0, max_gaussians_per_tile, max_gaussians_per_batch):
+            end_idx = start_idx + max_gaussians_per_batch
 
             batch_means = tile_means[start_idx:end_idx].reshape(-1, 2)
             batch_conics = tile_conics[start_idx:end_idx].reshape(-1, 3)
@@ -223,75 +292,44 @@ class Rasterizer:
             batch_opacities = tile_opacities[start_idx:end_idx].reshape(-1)
             batch_extents = tile_extents[start_idx:end_idx].reshape(-1)
 
-            tile_image_delta, tile_transmittance = self._render_batch_step(
-                tile_pixels=tile_pixels,
-                batch_means=batch_means,
-                batch_conics=batch_conics,
-                batch_colors=batch_colors,
-                batch_opacities=batch_opacities,
-                batch_extents=batch_extents,
-                tile_transmittance=tile_transmittance,
-            )
+            # 1. Pixel-to-mean offsets
+            d = tile_pixels[None, :, :] - batch_means[:, None, :]  # [G, P, 2]
+            dx = d[:, :, 0]  # [G, P]
+            dy = d[:, :, 1]  # [G, P]
+
+            # 2. Square distance
+            dist_sq = dx**2 + dy**2  # [G, P]
+
+            # 3. Calculate power exponent
+            k_a = batch_conics[:, 0, None]  # [G, 1]
+            k_b = batch_conics[:, 1, None]  # [G, 1]
+            k_c = batch_conics[:, 2, None]  # [G, 1]
+
+            power = -0.5 * (k_a * dx**2 + 2.0 * k_b * dx * dy + k_c * dy**2)  # [G, P]
+
+            # 4. Apply boundaries mask
+            extent_sq = (batch_extents[:, None]) ** 2  # [G, 1]
+            inside_mask = (dist_sq <= extent_sq) & (power <= 0.0)
+
+            # 5. Compute alpha
+            alpha = batch_opacities[:, None] * mx.exp(power)  # [G, P]
+            alpha = mx.where(inside_mask, alpha, 0.0)
+
+            # 6. Cumulative blending
+            ones = mx.ones((1, P), dtype=mx.float32)
+            padded = mx.concatenate([ones, 1.0 - alpha[:-1]], axis=0)
+            T_local = mx.cumprod(padded, axis=0)  # [G, P]
+
+            T_global = tile_transmittance[None, :] * T_local  # [G, P]
+
+            # 7. Render accumulations
+            weights = T_global * alpha  # [G, P]
+            colors = batch_colors[:, None, :]  # [G, 1, 3]
+
+            tile_image_delta = mx.sum(weights[:, :, None] * colors, axis=0)  # [P, 3]
             tile_image = tile_image + tile_image_delta
 
-        return tile_image.reshape(tile.height, tile.width, 3)
+            # Update base transmittance for the next batch iteration
+            tile_transmittance = tile_transmittance * mx.prod(1.0 - alpha, axis=0)
 
-    def _render_batch_step(
-        self,
-        tile_pixels: mx.array,
-        batch_means: mx.array,
-        batch_conics: mx.array,
-        batch_colors: mx.array,
-        batch_opacities: mx.array,
-        batch_extents: mx.array,
-        tile_transmittance: mx.array,
-    ) -> tuple[mx.array, mx.array]:
-        """
-        Compiled mathematical core step. Fuses offset computations, power exponent calculations,
-        masking, and alpha-blending logic into a single compiled GPU operation.
-        """
-        # 1. Compute pixel-to-mean offsets
-        d = tile_pixels[None, :, :] - batch_means[:, None, :]  # [G, P, 2]
-        dx = d[:, :, 0]  # [G, P]
-        dy = d[:, :, 1]  # [G, P]
-
-        # 2. Distance squared
-        dist_sq = dx**2 + dy**2  # [G, P]
-
-        # 3. Compute power exponent using conics
-        k_a = batch_conics[:, 0, None]  # [G, 1]
-        k_b = batch_conics[:, 1, None]  # [G, 1]
-        k_c = batch_conics[:, 2, None]  # [G, 1]
-
-        power = -0.5 * (k_a * dx**2 + 2.0 * k_b * dx * dy + k_c * dy**2)  # [G, P]
-
-        # 4. Filter pixels outside the extent / radius
-        extent_sq = (batch_extents[:, None]) ** 2  # [G, 1]
-        inside_mask = (dist_sq <= extent_sq) & (power <= 0.0)
-
-        # 5. Compute alpha (pixel opacities)
-        alpha = batch_opacities[:, None] * mx.exp(power)  # [G, P]
-        alpha = mx.where(inside_mask, alpha, 0.0)
-
-        # 6. Front-to-back alpha blending using cumulative products
-        P = tile_pixels.shape[0]
-        ones = mx.ones((1, P), dtype=mx.float32)
-
-        # Concatenate ones to handle base transmittance; alpha[:-1] handles G=1 safely
-        padded = mx.concatenate([ones, 1.0 - alpha[:-1]], axis=0)
-        T_local = mx.cumprod(padded, axis=0)  # [G, P]
-
-        # Global absolute transmittance at each step
-        T_global = tile_transmittance[None, :] * T_local  # [G, P]
-
-        # 7. Compute color contributions
-        weights = T_global * alpha  # [G, P]
-        colors = batch_colors[:, None, :]  # [G, 1, 3]
-
-        # Sum up RGB values weighted by global alpha and accumulate
-        tile_image_delta = mx.sum(weights[:, :, None] * colors, axis=0)  # [P, 3]
-
-        # Update global transmittance for the next batch loop
-        next_transmittance = tile_transmittance * mx.prod(1.0 - alpha, axis=0)
-
-        return tile_image_delta, next_transmittance
+        return tile_image
