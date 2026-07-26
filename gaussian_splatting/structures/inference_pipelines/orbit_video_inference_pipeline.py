@@ -21,8 +21,6 @@ class OrbitPipelineInferenceParams(InferencePipelineParams):
     name: Literal["orbit"]
     model_config = ConfigDict(extra="forbid")
 
-    center: tuple[float, float, float]
-
     fps: Annotated[int, Field(gt=0)]
     n_frames: Annotated[int, Field(gt=0)]
 
@@ -37,6 +35,8 @@ class OrbitPipelineInferenceParams(InferencePipelineParams):
     max_phi: float
 
     phi_freq: Annotated[float, Field(ge=0)]
+
+    center: tuple[float, float, float] | None = None
 
 
 class OrbitVideoInferencePipeline(BaseInferencePipeline):
@@ -78,6 +78,9 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
         self.theta_list = None
         self.phi_list = None
         self._initialize_lists()
+
+        if self.configuration.center is None:
+            self.configuration.center = mx.mean(self.gaussians.positions, axis=0)
 
     def _initialize_lists(self) -> None:
         self.radius_list = [
