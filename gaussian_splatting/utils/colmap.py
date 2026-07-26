@@ -4,12 +4,17 @@ import tempfile
 from functools import wraps
 from pathlib import Path
 
+import cv2
+import mlx.core as mx
 import numpy as np
 import pycolmap
 import torch
 from pydantic import BaseModel
 
+from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
+from gaussian_splatting.structures.renderer.utils import _quaternions_to_rotation_matrices
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_saver import PLYSaver
 
@@ -107,6 +112,8 @@ class ColmapRunner:
         ply_output_path = self.output_folder / self.configuration.points_filename
         ply_saver = PLYSaver(ply_output_path)
         ply_saver.save_gaussians(gaussian_collection)
+
+        self._render_example_image(gaussian_collection)
 
     @suppress_output_wrapper
     def _run_feature_extraction(self) -> None:
@@ -287,23 +294,136 @@ class ColmapRunner:
         sh_dc = (colors_rgb - 0.5) / C0  # (N, 3)
         sh_rest = torch.zeros((n_points, NUM_SH_COEFFS - 1, 3), dtype=torch.float32)
         sh_coeffs = torch.cat([sh_dc.unsqueeze(1), sh_rest], dim=1)  # (N, 16, 3)
-        scene_extent = torch.norm(positions.max(dim=0).values - positions.min(dim=0).values)
-        base_sigma = torch.clamp(scene_extent / np.sqrt(float(n_points)), min=1e-4)
-        scales = base_sigma.expand(n_points, 1).repeat(1, 3) * 0.000001
+
+        # Initialise scales from mean distance to the 3 nearest neighbours (standard 3DGS init).
+        # Scales are stored in log-space since the renderer activates them with exp().
+        positions_np = positions.numpy()
+        K = 3
+        diff = positions_np[:, None, :] - positions_np[None, :, :]  # (N, N, 3)
+        dist_sq = np.sum(diff**2, axis=-1)  # (N, N)
+        np.fill_diagonal(dist_sq, np.inf)
+        knn_dist = np.sqrt(np.sort(dist_sq, axis=1)[:, :K])  # (N, K)
+        avg_dist = np.mean(knn_dist, axis=1).clip(min=1e-7)  # (N,)
+        # Use half the mean KNN distance so adjacent Gaussians don't overlap too much
+        log_scales = np.log(avg_dist * 0.5).astype(np.float32)  # (N,)
+        scales = torch.tensor(log_scales, dtype=torch.float32).unsqueeze(1).repeat(1, 3)
 
         quaternions = torch.zeros((n_points, 4), dtype=torch.float32)
         quaternions[:, 0] = 1.0
 
         opacities = torch.full(
             (n_points, 1),
-            fill_value=0.1,
+            fill_value=1,
             dtype=torch.float32,
         )
 
         return GaussianCollection.from_tensors(
-            positions=positions,
-            quaternions=quaternions,
-            scales=scales,
-            sh_coeffs=sh_coeffs,
-            opacities=opacities,
+            positions=mx.array(positions.numpy()),
+            quaternions=mx.array(quaternions.numpy()),
+            scales=mx.array(scales.numpy()),
+            sh_coeffs=mx.array(sh_coeffs.numpy()),
+            opacities=mx.array(opacities.numpy()),
         )
+
+    def _render_example_image(
+        self,
+        gaussian_collection: GaussianCollection,
+    ) -> None:
+        intrinsics_path = self.output_folder / self.configuration.intrinsics_filename
+        poses_path = self.output_folder / self.configuration.poses_filename
+
+        if not intrinsics_path.exists() or not poses_path.exists():
+            logger.warning("Intrinsics or poses file not found. Skipping example rendering.")
+            return
+
+        renderer = Renderer(RendererConfig(width=0, height=0, focal_length=0))
+
+        with open(intrinsics_path, "r") as f:
+            intrinsics = json.load(f)
+        with open(poses_path, "r") as f:
+            poses = json.load(f)
+
+        example_pose = poses[0]
+        camera_id = example_pose["camera_id"]
+
+        camera_meta = next((c for c in intrinsics if c["camera_id"] == camera_id), intrinsics[0])
+
+        height = camera_meta["height"]
+        width = camera_meta["width"]
+
+        # Determine the focal length
+        if "fx" in camera_meta and "fy" in camera_meta:
+            focal_length = (camera_meta["fx"] + camera_meta["fy"]) / 2.0
+        else:
+            focal_length = camera_meta.get("fx", camera_meta.get("f", 1.0))
+
+        # Retrieve COLMAP translation and quaternion
+        tx = example_pose["position"]["x"]
+        ty = example_pose["position"]["y"]
+        tz = example_pose["position"]["z"]
+
+        qw = example_pose["rotation"]["qw"]
+        qx = example_pose["rotation"]["qx"]
+        qy = example_pose["rotation"]["qy"]
+        qz = example_pose["rotation"]["qz"]
+
+        # Create MLX inputs for the pose
+        q_w2c = mx.array([[qw, qx, qy, qz]], dtype=mx.float32)
+        t_w2c = mx.array([tx, ty, tz], dtype=mx.float32)
+
+        # Convert quaternion to World-to-Camera (W2C) rotation matrix (3, 3)
+        r_w2c = _quaternions_to_rotation_matrices(q_w2c)[0]
+
+        # Convert World-to-Camera (W2C) to Camera-to-World (C2W)
+        r_c2w = r_w2c.T
+        t_c2w = -r_c2w @ t_w2c
+
+        # Build 4x4 C2W pose matrix natively in MLX
+        top_rows = mx.concatenate([r_c2w, mx.expand_dims(t_c2w, axis=1)], axis=1)
+        bottom_row = mx.array([[0.0, 0.0, 0.0, 1.0]], dtype=mx.float32)
+        pose_matrix = mx.concatenate([top_rows, bottom_row], axis=0)
+
+        # COLMAP convention (Y down, Z forward) → OpenGL convention (Y up, -Z forward)
+        # This matches the flip applied in GaussianSplattingDataset._compute_pose
+        flip = mx.array(
+            [[1.0, 0.0, 0.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, -1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+            dtype=mx.float32,
+        )
+        pose_matrix = pose_matrix @ flip
+
+        # Instantiate Camera with the MLX pose array
+        camera = Camera(
+            pose=pose_matrix,
+            focal_length=focal_length,
+            width=width,
+            height=height,
+        )
+
+        renderer = Renderer(
+            RendererConfig(
+                width=width,
+                height=height,
+                focal_length=focal_length,
+            )
+        )
+
+        try:
+            # Render the scene using the provided renderer
+            rendered_image = renderer.render(
+                camera=camera,
+                gaussians=gaussian_collection,
+            )
+
+            # Convert normalized floats [0.0, 1.0] to [0, 255] uint8 format
+            image_np = (rendered_image.array * 255.0).clip(0, 255).astype(np.uint8)
+
+            # Convert from RGB (renderer output) to BGR (OpenCV format)
+            image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+
+            # Save the image to the output folder
+            output_image_path = self.output_folder / "render_example.png"
+            cv2.imwrite(str(output_image_path), image_bgr)
+
+            logger.info(f"Saved rendered example image to {output_image_path}")
+        except Exception as e:
+            logger.error(f"Failed to render example image: {e}")

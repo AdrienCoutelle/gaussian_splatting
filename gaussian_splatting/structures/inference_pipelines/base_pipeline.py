@@ -1,7 +1,7 @@
 from abc import ABC
 
+import mlx.core as mx
 import numpy as np
-import torch
 from pydantic import BaseModel
 
 
@@ -22,7 +22,7 @@ class BaseInferencePipeline(ABC):
 
     def _get_closest_view_image(
         self,
-        target_pose: torch.Tensor,
+        target_pose: mx.array,
     ) -> np.ndarray:
         raise NotImplementedError
 
