@@ -1,7 +1,8 @@
-training_images_path: datasets/lego_low/train
-poses_json_path: datasets/lego_low/poses_colmap.json
-intrinsics_json_path: datasets/lego_low/intrinsics.json
-ply_path: datasets/lego_low/gaussians.ply
+training_images_path: datasets/lego_low2/train
+poses_json_path: datasets/lego_low2/poses_colmap.json
+intrinsics_json_path: datasets/lego_low2/intrinsics.json
+ply_path: datasets/lego_low2/gaussians.ply
+
 # ply_path: output/lego/20260715_220311/checkpoints/checkpoint_final.ply
 max_sh_degree: 1
 scale: 1

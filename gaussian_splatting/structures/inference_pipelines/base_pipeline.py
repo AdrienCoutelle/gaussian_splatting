@@ -52,7 +52,7 @@ class BaseInferencePipeline(ABC):
         pose = np.eye(4, dtype=np.float32)
         pose[:3, 0] = right_vec
         pose[:3, 1] = up_vec
-        pose[:3, 2] = -dir_vec
+        pose[:3, 2] = dir_vec
         pose[:3, 3] = position
 
         return pose
