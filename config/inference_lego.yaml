@@ -4,6 +4,7 @@ renderer_config:
   focal_length: 200
   width: 600
   height: 400
+  draw_axis: true
 
 
 inference_pipeline_config:

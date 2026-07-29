@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+import cv2
 import mlx.core as mx
 import numpy as np
 from pydantic import BaseModel, ConfigDict
@@ -38,6 +39,7 @@ class RendererConfig(BaseModel):
     gaussian_extent: float = 3.0
     tile_size: int = 16
     max_gaussians_per_batch: int = 1024
+    draw_axis: bool = False
 
 
 @profile
@@ -59,14 +61,17 @@ class Renderer:
         camera: Camera,
         gaussians: GaussianCollection,
     ) -> Image:
-        return Image(
-            array=np.array(
-                self.render_tensor(
-                    camera=camera,
-                    gaussians=gaussians,
-                )
-            ),
+        image_array = np.array(
+            self.render_tensor(
+                camera=camera,
+                gaussians=gaussians,
+            )
         )
+
+        if self.config.draw_axis:
+            image_array = self._draw_axes(image=image_array, camera=camera)
+
+        return Image(array=image_array)
 
     def render_tensor(
         self,
@@ -190,6 +195,57 @@ class Renderer:
         dirs_camera = -gaussians.positions / norms
         dirs_world = dirs_camera @ camera_to_world_rot.T
         return _evaluate_sh(sh_coeffs=gaussians.sh_coeffs, directions=dirs_world)
+
+    def _project_world_point_to_pixel(
+        self,
+        point_world: np.ndarray,
+        camera: Camera,
+    ) -> tuple[int, int] | None:
+        """Project a 3D world-space point to pixel coordinates. Returns None if behind camera."""
+        pose = np.array(camera.pose)
+        r_world_to_camera = pose[:3, :3].T
+        camera_center = pose[:3, 3]
+        point_camera = r_world_to_camera @ (point_world - camera_center)
+
+        if point_camera[2] <= 0.0:
+            return None
+
+        cx, cy = camera.principal_point
+        u = int(camera.f * point_camera[0] / point_camera[2] + cx)
+        v = int(camera.f * point_camera[1] / point_camera[2] + cy)
+        return (u, v)
+
+    def _draw_axes(
+        self,
+        image: np.ndarray,
+        camera: Camera,
+        axis_length: float = 0.5,
+        thickness: int = 2,
+    ) -> np.ndarray:
+        """Draw X (red), Y (green), Z (blue) world axes onto the image."""
+        # Work in uint8 BGR for OpenCV drawing, then convert back
+        img_uint8 = (np.clip(image, 0.0, 1.0) * 255).astype(np.uint8)
+        img_bgr = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2BGR)
+
+        origin = np.zeros(3)
+        axes = [
+            (np.array([axis_length, 0.0, 0.0]), (0, 0, 255)),   # X — red
+            (np.array([0.0, axis_length, 0.0]), (0, 255, 0)),   # Y — green
+            (np.array([0.0, 0.0, axis_length]), (255, 0, 0)),   # Z — blue
+        ]  # fmt: skip
+
+        origin_px = self._project_world_point_to_pixel(point_world=origin, camera=camera)
+        if origin_px is None:
+            return image
+
+        for axis_end, color in axes:
+            end_px = self._project_world_point_to_pixel(point_world=axis_end, camera=camera)
+            if end_px is None:
+                continue
+            cv2.line(img_bgr, pt1=origin_px, pt2=end_px, color=color, thickness=thickness)
+
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        return img_rgb.astype(np.float32) / 255.0
 
     def _run_rasterization(
         self,
