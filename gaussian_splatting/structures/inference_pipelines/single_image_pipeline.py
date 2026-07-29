@@ -80,6 +80,11 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
         image_array = (rendered_image.array * 255).astype(np.uint8)
         image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
 
+        if self.configuration.dataset_config_for_closest_view is not None:
+            closest_bgr = self._get_closest_view_image(target_pose=mx.array(pose))
+            closest_bgr = self._resize_to_fit(closest_bgr, image_bgr.shape[1], image_bgr.shape[0])
+            image_bgr = np.concatenate([image_bgr, closest_bgr], axis=1)
+
         cv2.imwrite(
             filename=self.output_path,
             img=image_bgr,

@@ -67,11 +67,16 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
 
         os.makedirs(self.output_folder, exist_ok=True)
 
+        frame_width = (
+            self.renderer.config.width * 2
+            if self.configuration.dataset_config_for_closest_view is not None
+            else self.renderer.config.width
+        )
         self.video_writer = cv2.VideoWriter(
             os.path.join(self.output_folder, output_name),
             fourcc,
             self.configuration.fps,
-            (self.renderer.config.width, self.renderer.config.height),
+            (frame_width, self.renderer.config.height),
         )
 
         self.radius_list = None
@@ -135,6 +140,12 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
                 (frame.array * 255).astype(np.uint8),
                 cv2.COLOR_RGB2BGR,
             )
+
+            if self.configuration.dataset_config_for_closest_view is not None:
+                closest_bgr = self._get_closest_view_image(target_pose=pose)
+                closest_bgr = self._resize_to_fit(closest_bgr, frame_bgr.shape[1], frame_bgr.shape[0])
+                frame_bgr = np.concatenate([frame_bgr, closest_bgr], axis=1)
+
             self.video_writer.write(frame_bgr)
 
         self.video_writer.release()
