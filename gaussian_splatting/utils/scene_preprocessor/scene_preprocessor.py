@@ -1,13 +1,10 @@
 import json
-import os
-import tempfile
-from functools import wraps
+from dataclasses import asdict
 from pathlib import Path
 
 import cv2
 import mlx.core as mx
 import numpy as np
-import pycolmap
 import torch
 from pydantic import BaseModel
 
@@ -17,27 +14,14 @@ from gaussian_splatting.structures.renderer.renderer import Renderer, RendererCo
 from gaussian_splatting.structures.renderer.utils import _quaternions_to_rotation_matrices
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_saver import PLYSaver
+from gaussian_splatting.utils.scene_preprocessor.colmap_wrapper import (
+    ColmapIntrinsic,
+    ColmapPose,
+    ColmapResults,
+    ColmapWrapper,
+)
 
-logger = Logger("COLMAP")
-
-
-def suppress_output_wrapper(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        with open(os.devnull, "w") as devnull:
-            old_stdout_fd = os.dup(1)
-            old_stderr_fd = os.dup(2)
-            os.dup2(devnull.fileno(), 1)
-            os.dup2(devnull.fileno(), 2)
-            try:
-                return func(*args, **kwargs)
-            finally:
-                os.dup2(old_stdout_fd, 1)
-                os.dup2(old_stderr_fd, 2)
-                os.close(old_stdout_fd)
-                os.close(old_stderr_fd)
-
-    return wrapper
+logger = Logger("SCENE_PREPROCESSOR")
 
 
 class ScenePreprocessorConfig(BaseModel):
@@ -50,249 +34,70 @@ class ScenePreprocessorConfig(BaseModel):
 
 
 class ScenePreprocessor:
-    CAMERA_MODEL = "PINHOLE"
-    MATCHER = "exhaustive"
-
     def __init__(
         self,
         configuration: ScenePreprocessorConfig,
     ) -> None:
         self.configuration = configuration
-
-        self.device = pycolmap.Device.auto
-        self.temp_dir = tempfile.TemporaryDirectory()
-
-        self.workspace_path = Path(self.temp_dir.name)
-        self.workspace_path.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        self.sparse_path = self.workspace_path / "sparse"
-        self.sparse_path.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        self.database_path = self.workspace_path / "database.db"
-
-        self.text_model_path = self.workspace_path / "text"
-        self.text_model_path.mkdir(parents=True, exist_ok=True)
-
-        self.images_path = Path(self.configuration.images_path)
-        if (
-            not self.images_path.exists()
-            or not self.images_path.is_dir()
-        ):  # fmt:skip
-            raise FileNotFoundError(
-                f"COLMAP images_path must point to an existing image directory, got '{self.configuration.images_path}'."
-            )
+        self.colmap_wrapper = ColmapWrapper(self.configuration.images_path)
 
         self.output_folder = Path(self.configuration.output_folder)
         self.output_folder.mkdir(parents=True, exist_ok=True)
 
     def run(self) -> None:
-        logger.info("Running COLMAP [1/4]: Extracting features...")
-        self._run_feature_extraction()
+        colmap_results = self.colmap_wrapper.run()
+        self._save_poses_json(colmap_results.poses)
+        self._save_intrinsics_json(colmap_results.intrinsics)
 
-        logger.info("Running COLMAP [2/4]: Matching features...")
-        self._run_feature_matching()
-
-        logger.info("Running COLMAP [3/4]: Running mapping...")
-        self._run_mapping()
-
-        logger.info("Running COLMAP [4/4]: Running reconstruction...")
-        self._run_reconstruction()
-
-        self._save_poses_json()
-
-        self._save_intrinsics_json()
-
-        gaussian_collection = self._create_gaussian_collection()
+        gaussian_collection = self._create_gaussian_collection(colmap_results)
 
         ply_output_path = self.output_folder / self.configuration.points_filename
         ply_saver = PLYSaver(ply_output_path)
         ply_saver.save_gaussians(gaussian_collection)
 
-        self._render_example_image(gaussian_collection)
-
-    @suppress_output_wrapper
-    def _run_feature_extraction(self) -> None:
-        reader_options = pycolmap.ImageReaderOptions(camera_model=self.CAMERA_MODEL)
-        pycolmap.extract_features(
-            database_path=self.database_path,
-            image_path=self.images_path,
-            camera_mode=pycolmap.CameraMode.SINGLE,
-            reader_options=reader_options,
-            device=self.device,
+        self._render_example_image(
+            gaussian_collection=gaussian_collection,
+            colmap_results=colmap_results,
         )
 
-    @suppress_output_wrapper
-    def _run_feature_matching(self) -> None:
-        if self.MATCHER == "exhaustive":
-            pycolmap.match_exhaustive(
-                database_path=self.database_path,
-                device=self.device,
-            )
-        elif self.MATCHER == "sequential":
-            pycolmap.match_sequential(
-                database_path=self.database_path,
-                device=self.device,
-            )
-        else:
-            raise ValueError(f"Unsupported matcher: {self.MATCHER}")
-
-    @suppress_output_wrapper
-    def _run_mapping(self) -> None:
-        maps = pycolmap.incremental_mapping(
-            database_path=self.database_path,
-            image_path=self.images_path,
-            output_path=self.sparse_path,
-        )
-
-        if len(maps) == 0:
-            raise RuntimeError("COLMAP mapper did not produce any reconstruction.")
-
-    @suppress_output_wrapper
-    def _run_reconstruction(self) -> None:
-        reconstruction = pycolmap.Reconstruction(self.sparse_path / "0")
-        reconstruction.write_text(self.text_model_path)
-
-    def _save_poses_json(self) -> None:
+    def _save_poses_json(
+        self,
+        poses: list[ColmapPose],
+    ) -> None:
         output_path = self.output_folder / self.configuration.poses_filename
 
-        images = self._parse_images(self.text_model_path / "images.txt")
-
         with open(output_path, "w") as file:
-            json.dump(images, file, indent=2)
+            json.dump([asdict(pose) for pose in poses], file, indent=2)
 
         logger.info(f"Saved camera poses to {output_path}")
 
-    def _save_intrinsics_json(self) -> None:
+    def _save_intrinsics_json(
+        self,
+        intrinsics: list[ColmapIntrinsic],
+    ) -> None:
         output_path = self.output_folder / self.configuration.intrinsics_filename
 
-        cameras = self._parse_cameras(self.text_model_path / "cameras.txt")
-
         with open(output_path, "w") as file:
-            json.dump(cameras, file, indent=2)
+            json.dump(
+                [
+                    {key: value for key, value in asdict(intrinsic).items() if value is not None}
+                    for intrinsic in intrinsics
+                ],
+                file,
+                indent=2,
+            )
 
         logger.info(f"Saved camera intrinsics to {output_path}")
 
-    def _parse_cameras(
+    def _create_gaussian_collection(
         self,
-        cameras_path: Path,
-    ) -> list[dict]:
-        cameras = []
-        with open(cameras_path) as file:
-            for line in file:
-                line = line.strip()
-                if (
-                    not line
-                    or line.startswith("#")
-                ):  # fmt:skip
-                    continue
+        colmap_results: ColmapResults,
+    ) -> GaussianCollection:
+        if len(colmap_results.points) == 0:
+            raise ValueError("COLMAP reconstruction did not produce any 3D points.")
 
-                parts = line.split()
-                camera_id = int(parts[0])
-                model = parts[1]
-                width = int(parts[2])
-                height = int(parts[3])
-                params = [float(p) for p in parts[4:]]
-
-                camera_data = {
-                    "camera_id": camera_id,
-                    "model": model,
-                    "width": width,
-                    "height": height,
-                }
-
-                if model == "PINHOLE":
-                    camera_data["fx"] = params[0]
-                    camera_data["fy"] = params[1]
-                    camera_data["cx"] = params[2]
-                    camera_data["cy"] = params[3]
-                elif model == "SIMPLE_RADIAL":
-                    camera_data["f"] = params[0]
-                    camera_data["cx"] = params[1]
-                    camera_data["cy"] = params[2]
-                    camera_data["k"] = params[3]
-                else:
-                    camera_data["params"] = params
-
-                cameras.append(camera_data)
-
-        return cameras
-
-    def _parse_images(
-        self,
-        images_path: Path,
-    ) -> list[dict]:
-        images = []
-        with open(images_path) as file:
-            lines = [
-                line.strip()
-                for line in file
-                if (
-                    line.strip()
-                    and not line.startswith("#")
-                )
-            ]  # fmt:skip
-
-        for i in range(0, len(lines), 2):
-            parts = lines[i].split()
-            image_id = int(parts[0])
-            qw, qx, qy, qz = [float(parts[j]) for j in range(1, 5)]
-            tx, ty, tz = [float(parts[j]) for j in range(5, 8)]
-            camera_id = int(parts[8])
-            name = parts[9]
-
-            images.append(
-                {
-                    "image_id": image_id,
-                    "camera_id": camera_id,
-                    "name": name,
-                    "position": {
-                        "x": tx,
-                        "y": ty,
-                        "z": tz,
-                    },
-                    "rotation": {
-                        "qw": qw,
-                        "qx": qx,
-                        "qy": qy,
-                        "qz": qz,
-                    },
-                }
-            )
-
-        return images
-
-    def _create_gaussian_collection(self) -> GaussianCollection:
-        points3d_path = self.text_model_path / "points3D.txt"
-
-        if not points3d_path.exists():
-            raise FileNotFoundError(f"No points3D.txt found at {points3d_path}")
-
-        positions = []
-        colors_uint8 = []
-        with open(points3d_path) as file:
-            for line in file:
-                line = line.strip()
-                if (
-                    not line
-                    or line.startswith("#")
-                ):  # fmt:skip
-                    continue
-
-                parts = line.split()
-                positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
-                colors_uint8.append([int(parts[4]), int(parts[5]), int(parts[6])])
-
-        if len(positions) == 0:
-            raise ValueError("No 3D points found in points3D.txt")
-
-        positions = torch.tensor(positions, dtype=torch.float32)
-        colors_rgb = torch.tensor(colors_uint8, dtype=torch.float32) / 255.0
+        positions = torch.tensor([point.xyz for point in colmap_results.points], dtype=torch.float32)
+        colors_rgb = torch.tensor([point.rgb for point in colmap_results.points], dtype=torch.float32) / 255.0
 
         n_points = positions.shape[0]
 
@@ -334,54 +139,42 @@ class ScenePreprocessor:
     def _render_example_image(
         self,
         gaussian_collection: GaussianCollection,
+        colmap_results: ColmapResults,
     ) -> None:
         if self.configuration.example_image_filename is None:
             return
 
-        intrinsics_path = self.output_folder / self.configuration.intrinsics_filename
-        poses_path = self.output_folder / self.configuration.poses_filename
-
-        if (
-            not intrinsics_path.exists()
-            or not poses_path.exists()
-        ):  # fmt:skip
-            logger.warning("Intrinsics or poses file not found. Skipping example rendering.")
+        if not colmap_results.intrinsics or not colmap_results.poses:
+            logger.warning("COLMAP did not produce intrinsics or poses. Skipping example rendering.")
             return
 
-        with open(intrinsics_path, "r") as f:
-            intrinsics = json.load(f)
-
-        with open(poses_path, "r") as f:
-            poses = json.load(f)
-
-        example_pose = poses[0]
-        camera_id = example_pose["camera_id"]
+        example_pose = colmap_results.poses[0]
 
         camera_meta = next(
             (
                 c
-                for c in intrinsics
-                if c["camera_id"] == camera_id
+                for c in colmap_results.intrinsics
+                if c.camera_id == example_pose.camera_id
             ),
-            intrinsics[0]
+            colmap_results.intrinsics[0],
         )  # fmt:skip
 
-        height = camera_meta["height"]
-        width = camera_meta["width"]
+        height = camera_meta.height
+        width = camera_meta.width
 
-        if "fx" in camera_meta and "fy" in camera_meta:
-            focal_length = (camera_meta["fx"] + camera_meta["fy"]) / 2.0
+        if camera_meta.fx is not None and camera_meta.fy is not None:
+            focal_length = (camera_meta.fx + camera_meta.fy) / 2.0
         else:
-            focal_length = camera_meta.get("fx", camera_meta.get("f", 1.0))
+            focal_length = camera_meta.fx or camera_meta.f or 1.0
 
-        tx = example_pose["position"]["x"]
-        ty = example_pose["position"]["y"]
-        tz = example_pose["position"]["z"]
+        tx = example_pose.position["x"]
+        ty = example_pose.position["y"]
+        tz = example_pose.position["z"]
 
-        qw = example_pose["rotation"]["qw"]
-        qx = example_pose["rotation"]["qx"]
-        qy = example_pose["rotation"]["qy"]
-        qz = example_pose["rotation"]["qz"]
+        qw = example_pose.rotation["qw"]
+        qx = example_pose.rotation["qx"]
+        qy = example_pose.rotation["qy"]
+        qz = example_pose.rotation["qz"]
 
         q_w2c = mx.array([[qw, qx, qy, qz]], dtype=mx.float32)
         t_w2c = mx.array([tx, ty, tz], dtype=mx.float32)
