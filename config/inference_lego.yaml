@@ -1,4 +1,4 @@
-ply_file_path: output/lego/20260725_204628/checkpoints/checkpoint_epoch_100.ply
+ply_file_path: output/lego/20260801_195038/checkpoints/checkpoint_final.ply
 
 renderer_config:
   focal_length: 200

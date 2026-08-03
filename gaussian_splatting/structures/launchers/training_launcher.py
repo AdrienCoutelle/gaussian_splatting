@@ -7,11 +7,11 @@ from pydantic import BaseModel, ConfigDict
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
-from gaussian_splatting.utils.colmap import ColmapConfig, ColmapRunner
 from gaussian_splatting.utils.image import is_image
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_loader import PLYLoader
 from gaussian_splatting.utils.profiler import Profiler
+from gaussian_splatting.utils.scene_preprocessor import ScenePreprocessor, ScenePreprocessorConfig
 
 logger = Logger("TRAINING_LAUNCHER")
 
@@ -108,7 +108,7 @@ class TrainingLauncher:
             raise FileNotFoundError(f"Inconsistent COLMAP outputs: {present} exist but {missing} do not.")
 
         logger.info("COLMAP outputs not found, running COLMAP...")
-        colmap_config = ColmapConfig(
+        colmap_config = ScenePreprocessorConfig(
             images_path=self.configuration.training_images_path,
             output_folder=os.path.dirname(self.configuration.poses_json_path),
             poses_filename=os.path.basename(self.configuration.poses_json_path),
@@ -116,7 +116,7 @@ class TrainingLauncher:
             points_filename=os.path.basename(self.configuration.ply_path),
             example_image_filename="example_image.png",
         )
-        runner = ColmapRunner(colmap_config)
+        runner = ScenePreprocessor(colmap_config)
         runner.run()
 
     def run(self) -> None:

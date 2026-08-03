@@ -7,8 +7,8 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import click
 import yaml
 
-from gaussian_splatting.utils.colmap import ColmapConfig, ColmapRunner
 from gaussian_splatting.utils.logger import Logger
+from gaussian_splatting.utils.scene_preprocessor import ScenePreprocessor, ScenePreprocessorConfig
 
 logger = Logger("LAUNCH_COLMAP")
 
@@ -22,8 +22,8 @@ def main(config_path: str) -> None:
     with open(config_path) as file:
         config_dict = yaml.safe_load(file)
 
-    config = ColmapConfig(**config_dict)
-    runner = ColmapRunner(config)
+    config = ScenePreprocessorConfig(**config_dict)
+    runner = ScenePreprocessor(config)
     runner.run()
 
     ply_loader = PLYLoader(runner.output_folder / config.points_filename)

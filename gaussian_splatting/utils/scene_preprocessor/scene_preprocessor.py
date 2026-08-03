@@ -40,7 +40,7 @@ def suppress_output_wrapper(func):
     return wrapper
 
 
-class ColmapConfig(BaseModel):
+class ScenePreprocessorConfig(BaseModel):
     images_path: str
     output_folder: str
     poses_filename: str
@@ -49,13 +49,13 @@ class ColmapConfig(BaseModel):
     example_image_filename: str | None = None
 
 
-class ColmapRunner:
+class ScenePreprocessor:
     CAMERA_MODEL = "PINHOLE"
     MATCHER = "exhaustive"
 
     def __init__(
         self,
-        configuration: ColmapConfig,
+        configuration: ScenePreprocessorConfig,
     ) -> None:
         self.configuration = configuration
 
