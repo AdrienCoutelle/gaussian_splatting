@@ -16,6 +16,7 @@ from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_saver import PLYSaver
 from gaussian_splatting.utils.scene_preprocessor.colmap_wrapper import (
     ColmapIntrinsic,
+    ColmapPoint,
     ColmapPose,
     ColmapResults,
     ColmapWrapper,
@@ -46,6 +47,7 @@ class ScenePreprocessor:
 
     def run(self) -> None:
         colmap_results = self.colmap_wrapper.run()
+        colmap_results = self._orient_and_center_scene(colmap_results)
         self._save_poses_json(colmap_results.poses)
         self._save_intrinsics_json(colmap_results.intrinsics)
 
@@ -59,6 +61,197 @@ class ScenePreprocessor:
             gaussian_collection=gaussian_collection,
             colmap_results=colmap_results,
         )
+
+    def _orient_and_center_scene(
+        self,
+        colmap_results: ColmapResults,
+    ) -> ColmapResults:
+        """Rotate the reconstruction to Z-up and center its sparse points at the origin.
+
+        COLMAP camera poses are stored as world-to-camera transforms. Apply the same world rotation
+        and translation to camera centers and reconstructed points so the saved poses and PLY remain
+        in the same coordinate system.
+        """
+        if not colmap_results.poses:
+            raise ValueError("COLMAP reconstruction did not produce any camera poses.")
+        if not colmap_results.points:
+            raise ValueError("COLMAP reconstruction did not produce any 3D points.")
+
+        camera_to_world_rotations = np.stack(
+            [self._quaternion_to_rotation_matrix(pose.rotation).T for pose in colmap_results.poses]
+        )
+        average_camera_up = -camera_to_world_rotations[:, :, 1].mean(axis=0)
+        if np.linalg.norm(average_camera_up) < 1e-6:
+            raise ValueError("Could not determine an average camera up direction from the COLMAP poses.")
+
+        world_rotation = self._rotation_between_vectors(
+            source=average_camera_up,
+            target=np.array([0.0, 0.0, 1.0]),
+        )
+        rotated_point_positions = np.stack([world_rotation @ np.asarray(point.xyz) for point in colmap_results.points])
+        world_translation = -rotated_point_positions.mean(axis=0)
+
+        processed_poses = [
+            self._rotate_pose(
+                pose=pose,
+                world_rotation=world_rotation,
+                world_translation=world_translation,
+            )
+            for pose in colmap_results.poses
+        ]
+        processed_points = [
+            ColmapPoint(
+                point_id=point.point_id,
+                xyz=(rotated_position + world_translation).tolist(),
+                rgb=point.rgb,
+                error=point.error,
+                track_length=point.track_length,
+            )
+            for point, rotated_position in zip(
+                colmap_results.points,
+                rotated_point_positions,
+                strict=True,
+            )
+        ]
+
+        logger.info("Rotated and centered the COLMAP reconstruction in a Z-up coordinate system.")
+        return ColmapResults(
+            poses=processed_poses,
+            intrinsics=colmap_results.intrinsics,
+            points=processed_points,
+        )
+
+    @staticmethod
+    def _rotate_pose(
+        pose: ColmapPose,
+        world_rotation: np.ndarray,
+        world_translation: np.ndarray,
+    ) -> ColmapPose:
+        rotation_world_to_camera = ScenePreprocessor._quaternion_to_rotation_matrix(pose.rotation)
+        translation_world_to_camera = np.array(
+            [
+                pose.position["x"],
+                pose.position["y"],
+                pose.position["z"],
+            ]
+        )
+
+        camera_center_world = -rotation_world_to_camera.T @ translation_world_to_camera
+        processed_rotation_world_to_camera = rotation_world_to_camera @ world_rotation.T
+        processed_camera_center_world = world_rotation @ camera_center_world + world_translation
+        processed_translation_world_to_camera = -processed_rotation_world_to_camera @ processed_camera_center_world
+
+        quaternion = ScenePreprocessor._rotation_matrix_to_quaternion(processed_rotation_world_to_camera)
+        return ColmapPose(
+            image_id=pose.image_id,
+            camera_id=pose.camera_id,
+            name=pose.name,
+            position={
+                "x": float(processed_translation_world_to_camera[0]),
+                "y": float(processed_translation_world_to_camera[1]),
+                "z": float(processed_translation_world_to_camera[2]),
+            },
+            rotation={
+                "qw": float(quaternion[0]),
+                "qx": float(quaternion[1]),
+                "qy": float(quaternion[2]),
+                "qz": float(quaternion[3]),
+            },
+        )
+
+    @staticmethod
+    def _rotation_between_vectors(
+        source: np.ndarray,
+        target: np.ndarray,
+    ) -> np.ndarray:
+        source = source / np.linalg.norm(source)
+        target = target / np.linalg.norm(target)
+        cosine = float(np.clip(np.dot(source, target), -1.0, 1.0))
+
+        if np.isclose(cosine, 1.0):
+            return np.eye(3)
+
+        if np.isclose(cosine, -1.0):
+            rotation_axis = np.cross(source, np.array([1.0, 0.0, 0.0]))
+            if np.linalg.norm(rotation_axis) < 1e-6:
+                rotation_axis = np.cross(source, np.array([0.0, 1.0, 0.0]))
+            rotation_axis /= np.linalg.norm(rotation_axis)
+            skew_symmetric = ScenePreprocessor._skew_symmetric_matrix(rotation_axis)
+            return np.eye(3) + 2.0 * skew_symmetric @ skew_symmetric
+
+        cross_product = np.cross(source, target)
+        skew_symmetric = ScenePreprocessor._skew_symmetric_matrix(cross_product)
+        scale = (1.0 - cosine) / np.dot(cross_product, cross_product)
+        return np.eye(3) + skew_symmetric + skew_symmetric @ skew_symmetric * scale
+
+    @staticmethod
+    def _skew_symmetric_matrix(vector: np.ndarray) -> np.ndarray:
+        return np.array(
+            [
+                [0.0, -vector[2], vector[1]],
+                [vector[2], 0.0, -vector[0]],
+                [-vector[1], vector[0], 0.0],
+            ]
+        )
+
+    @staticmethod
+    def _quaternion_to_rotation_matrix(
+        quaternion: dict,
+    ) -> np.ndarray:
+        normalized_quaternion = np.array(
+            [
+                quaternion["qw"],
+                quaternion["qx"],
+                quaternion["qy"],
+                quaternion["qz"],
+            ]
+        )
+        normalized_quaternion /= np.linalg.norm(normalized_quaternion)
+        w, x, y, z = normalized_quaternion
+        return np.array(
+            [
+                [1 - 2 * (y**2 + z**2), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+                [2 * (x * y + w * z), 1 - 2 * (x**2 + z**2), 2 * (y * z - w * x)],
+                [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x**2 + y**2)],
+            ]
+        )
+
+    @staticmethod
+    def _rotation_matrix_to_quaternion(
+        rotation: np.ndarray,
+    ) -> np.ndarray:
+        trace = np.trace(rotation)
+        if trace > 0.0:
+            scale = 2.0 * np.sqrt(trace + 1.0)
+            quaternion = np.array(
+                [
+                    0.25 * scale,
+                    (rotation[2, 1] - rotation[1, 2]) / scale,
+                    (rotation[0, 2] - rotation[2, 0]) / scale,
+                    (rotation[1, 0] - rotation[0, 1]) / scale,
+                ]
+            )
+        else:
+            dominant_index = int(np.argmax(np.diag(rotation)))
+            next_index = (dominant_index + 1) % 3
+            final_index = (dominant_index + 2) % 3
+            scale = 2.0 * np.sqrt(
+                1.0
+                + rotation[dominant_index, dominant_index]
+                - rotation[next_index, next_index]
+                - rotation[final_index, final_index]
+            )
+            quaternion = np.zeros(4)
+            quaternion[0] = (rotation[final_index, next_index] - rotation[next_index, final_index]) / scale
+            quaternion[dominant_index + 1] = 0.25 * scale
+            quaternion[next_index + 1] = (
+                rotation[next_index, dominant_index] + rotation[dominant_index, next_index]
+            ) / scale
+            quaternion[final_index + 1] = (
+                rotation[final_index, dominant_index] + rotation[dominant_index, final_index]
+            ) / scale
+
+        return quaternion / np.linalg.norm(quaternion)
 
     def _save_poses_json(
         self,
@@ -200,6 +393,7 @@ class ScenePreprocessor:
                 width=width,
                 height=height,
                 focal_length=focal_length,
+                draw_axis=True,
             )
         )
 

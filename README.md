@@ -42,4 +42,3 @@ This project implements the method described in:
 - Use metal for parallel tile rasterizing.
 - Choose a convention for the camera. If it is not the same as colmap, hanle it directly in colmap, not in the dataset or renderer class.
 - Use uv.
-- Modify the cameras poses and the original gaussians so the cmaeras are mostly vertical. This will mae the model horizontal and pointing upward.

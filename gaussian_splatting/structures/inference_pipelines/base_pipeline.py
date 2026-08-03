@@ -132,7 +132,7 @@ class BaseInferencePipeline(ABC):
             right_norm = np.linalg.norm(right_vec)
         right_vec /= right_norm
 
-        up_vec = np.cross(right_vec, dir_vec)
+        up_vec = np.cross(dir_vec, right_vec)
 
         pose = np.eye(4, dtype=np.float32)
         pose[:3, 0] = right_vec
