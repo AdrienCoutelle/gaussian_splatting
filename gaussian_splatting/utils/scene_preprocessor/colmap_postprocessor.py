@@ -14,32 +14,52 @@ logger = Logger("COLMAP_POSTPROCESSOR")
 
 @dataclass(frozen=True)
 class WorldCoordinateTransform:
-    """Rigid transform from the original COLMAP world frame to the normalized world frame."""
+    matrix: np.ndarray
 
-    rotation: np.ndarray
-    translation: np.ndarray
+    @classmethod
+    def from_rotation_and_translation(
+        cls,
+        rotation: np.ndarray,
+        translation: np.ndarray,
+    ) -> "WorldCoordinateTransform":
+        matrix = np.eye(4)
+        matrix[:3, :3] = rotation
+        matrix[:3, 3] = translation
+        return cls(matrix=matrix)
+
+    @property
+    def inverse_matrix(self) -> np.ndarray:
+        rotation = self.matrix[:3, :3]
+        translation = self.matrix[:3, 3]
+
+        inverse_matrix = np.eye(4)
+        inverse_matrix[:3, :3] = rotation.T
+        inverse_matrix[:3, 3] = -rotation.T @ translation
+        return inverse_matrix
 
     def apply_to_positions(
         self,
         positions: np.ndarray,
     ) -> np.ndarray:
-        return positions @ self.rotation.T + self.translation
+        homogeneous_positions = np.concatenate(
+            [
+                positions,
+                np.ones((positions.shape[0], 1)),
+            ],
+            axis=1,
+        )
+        transformed_positions = (self.matrix @ homogeneous_positions.T).T
+        return transformed_positions[:, :3]
 
-    def apply_to_world_to_camera_pose(
+    def apply_to_world_to_camera_matrix(
         self,
-        rotation_world_to_camera: np.ndarray,
-        translation_world_to_camera: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        camera_center_world = -rotation_world_to_camera.T @ translation_world_to_camera
-        normalized_rotation_world_to_camera = rotation_world_to_camera @ self.rotation.T
-        normalized_camera_center_world = self.apply_to_positions(camera_center_world)
-        normalized_translation_world_to_camera = -normalized_rotation_world_to_camera @ normalized_camera_center_world
-        return normalized_rotation_world_to_camera, normalized_translation_world_to_camera
+        world_to_camera_matrix: np.ndarray,
+    ) -> np.ndarray:
+        # If X_new = T_new_from_old @ X_old, then X_camera = E_old @ inv(T_new_from_old) @ X_new.
+        return world_to_camera_matrix @ self.inverse_matrix
 
 
 class ColmapPostprocessor:
-    """Realign COLMAP cameras and sparse points into a shared normalized world frame."""
-
     def run(
         self,
         colmap_results: ColmapResults,
@@ -49,11 +69,38 @@ class ColmapPostprocessor:
         if len(colmap_results.points) == 0:
             raise ValueError("COLMAP reconstruction did not produce any 3D points.")
 
-        point_positions = np.asarray([point.xyz for point in colmap_results.points])
-        world_transform = self._build_world_transform(
-            poses=colmap_results.poses,
-            point_positions=point_positions,
+        world_transform = self.compute_world_transform(colmap_results)
+        processed_results = self.apply_world_transform(
+            colmap_results=colmap_results,
+            world_transform=world_transform,
         )
+
+        logger.info("Aligned the COLMAP reconstruction to world +Z and centered sparse points at the origin.")
+        return processed_results
+
+    def compute_world_transform(
+        self,
+        colmap_results: ColmapResults,
+    ) -> WorldCoordinateTransform:
+        point_positions = np.asarray([point.xyz for point in colmap_results.points], dtype=np.float64)
+        average_camera_up = self._average_camera_up_direction(colmap_results.poses)
+        rotate_to_z_up = self._rotation_between_vectors(
+            source=average_camera_up,
+            target=np.array([0.0, 0.0, 1.0]),
+        )
+        rotated_point_positions = point_positions @ rotate_to_z_up.T
+        translation_to_origin = -rotated_point_positions.mean(axis=0)
+        return WorldCoordinateTransform.from_rotation_and_translation(
+            rotation=rotate_to_z_up,
+            translation=translation_to_origin,
+        )
+
+    def apply_world_transform(
+        self,
+        colmap_results: ColmapResults,
+        world_transform: WorldCoordinateTransform,
+    ) -> ColmapResults:
+        point_positions = np.asarray([point.xyz for point in colmap_results.points], dtype=np.float64)
         processed_point_positions = world_transform.apply_to_positions(point_positions)
 
         processed_poses = [
@@ -78,33 +125,10 @@ class ColmapPostprocessor:
             )
         ]
 
-        logger.info("Realigned and grounded the COLMAP reconstruction with its main axis aligned to X.")
         return ColmapResults(
             poses=processed_poses,
             intrinsics=colmap_results.intrinsics,
             points=processed_points,
-        )
-
-    def _build_world_transform(
-        self,
-        poses: list[ColmapPose],
-        point_positions: np.ndarray,
-    ) -> WorldCoordinateTransform:
-        average_camera_up = self._average_camera_up_direction(poses)
-        rotate_to_z_up = self._rotation_between_vectors(
-            source=average_camera_up,
-            target=np.array([0.0, 0.0, 1.0]),
-        )
-
-        z_up_point_positions = point_positions @ rotate_to_z_up.T
-        align_main_axis_with_x = self._horizontal_principal_axis_rotation(z_up_point_positions)
-        world_rotation = align_main_axis_with_x @ rotate_to_z_up
-
-        rotated_point_positions = point_positions @ world_rotation.T
-        world_translation = self._center_horizontally_and_ground(rotated_point_positions)
-        return WorldCoordinateTransform(
-            rotation=world_rotation,
-            translation=world_translation,
         )
 
     def _average_camera_up_direction(
@@ -121,48 +145,6 @@ class ColmapPostprocessor:
         return average_camera_up
 
     @staticmethod
-    def _center_horizontally_and_ground(
-        point_positions: np.ndarray,
-    ) -> np.ndarray:
-        point_center = point_positions.mean(axis=0)
-        lowest_point_z = point_positions[:, 2].min()
-        return np.array(
-            [
-                -point_center[0],
-                -point_center[1],
-                -lowest_point_z,
-            ]
-        )
-
-    @staticmethod
-    def _horizontal_principal_axis_rotation(
-        point_positions: np.ndarray,
-    ) -> np.ndarray:
-        """Return a Z-axis rotation that maps the dominant horizontal PCA direction to positive X."""
-        centered_xy = point_positions[:, :2] - point_positions[:, :2].mean(axis=0)
-        covariance = centered_xy.T @ centered_xy
-        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-
-        if eigenvalues[-1] < 1e-12:
-            return np.eye(3)
-
-        principal_axis = eigenvectors[:, -1]
-        largest_component = np.argmax(np.abs(principal_axis))
-        if principal_axis[largest_component] < 0.0:
-            principal_axis = -principal_axis
-
-        angle = np.arctan2(principal_axis[1], principal_axis[0])
-        cosine = np.cos(angle)
-        sine = np.sin(angle)
-        return np.array(
-            [
-                [cosine, sine, 0.0],
-                [-sine, cosine, 0.0],
-                [0.0, 0.0, 1.0],
-            ]
-        )
-
-    @staticmethod
     def _transform_pose(
         pose: ColmapPose,
         world_transform: WorldCoordinateTransform,
@@ -176,12 +158,13 @@ class ColmapPostprocessor:
             ]
         )
 
-        processed_rotation_world_to_camera, processed_translation_world_to_camera = (
-            world_transform.apply_to_world_to_camera_pose(
-                rotation_world_to_camera=rotation_world_to_camera,
-                translation_world_to_camera=translation_world_to_camera,
-            )
-        )
+        world_to_camera_matrix = np.eye(4)
+        world_to_camera_matrix[:3, :3] = rotation_world_to_camera
+        world_to_camera_matrix[:3, 3] = translation_world_to_camera
+        processed_world_to_camera_matrix = world_transform.apply_to_world_to_camera_matrix(world_to_camera_matrix)
+
+        processed_rotation_world_to_camera = processed_world_to_camera_matrix[:3, :3]
+        processed_translation_world_to_camera = processed_world_to_camera_matrix[:3, 3]
 
         quaternion = ColmapPostprocessor._rotation_matrix_to_quaternion(processed_rotation_world_to_camera)
         return ColmapPose(
@@ -200,6 +183,21 @@ class ColmapPostprocessor:
                 "qz": float(quaternion[3]),
             },
         )
+
+    @staticmethod
+    def _positions_in_camera_frame(
+        positions: np.ndarray,
+        pose: ColmapPose,
+    ) -> np.ndarray:
+        rotation_world_to_camera = ColmapPostprocessor._quaternion_to_rotation_matrix(pose.rotation)
+        translation_world_to_camera = np.array(
+            [
+                pose.position["x"],
+                pose.position["y"],
+                pose.position["z"],
+            ]
+        )
+        return positions @ rotation_world_to_camera.T + translation_world_to_camera
 
     @staticmethod
     def _rotation_between_vectors(

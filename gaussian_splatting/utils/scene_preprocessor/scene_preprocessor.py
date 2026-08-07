@@ -47,7 +47,7 @@ class ScenePreprocessor:
 
     def run(self) -> None:
         colmap_results = self.colmap_wrapper.run()
-        # colmap_results = self.colmap_postprocessor.run(colmap_results)
+        colmap_results = self.colmap_postprocessor.run(colmap_results)
         self._save_poses_json(colmap_results.poses)
         self._save_intrinsics_json(colmap_results.intrinsics)
 
