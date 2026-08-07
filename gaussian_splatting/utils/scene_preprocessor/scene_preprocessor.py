@@ -1,11 +1,10 @@
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import cv2
 import mlx.core as mx
 import numpy as np
-import torch
 from pydantic import BaseModel
 
 from gaussian_splatting.structures.camera import Camera
@@ -32,6 +31,31 @@ class ScenePreprocessorConfig(BaseModel):
     intrinsics_filename: str
     points_filename: str
     example_image_filename: str | None = None
+
+
+@dataclass(frozen=True)
+class WorldCoordinateTransform:
+    """Rigid transform from the original COLMAP world frame to the normalized world frame."""
+
+    rotation: np.ndarray
+    translation: np.ndarray
+
+    def apply_to_positions(
+        self,
+        positions: np.ndarray,
+    ) -> np.ndarray:
+        return positions @ self.rotation.T + self.translation
+
+    def apply_to_world_to_camera_pose(
+        self,
+        rotation_world_to_camera: np.ndarray,
+        translation_world_to_camera: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        camera_center_world = -rotation_world_to_camera.T @ translation_world_to_camera
+        normalized_rotation_world_to_camera = rotation_world_to_camera @ self.rotation.T
+        normalized_camera_center_world = self.apply_to_positions(camera_center_world)
+        normalized_translation_world_to_camera = -normalized_rotation_world_to_camera @ normalized_camera_center_world
+        return normalized_rotation_world_to_camera, normalized_translation_world_to_camera
 
 
 class ScenePreprocessor:
@@ -66,7 +90,7 @@ class ScenePreprocessor:
         self,
         colmap_results: ColmapResults,
     ) -> ColmapResults:
-        """Rotate the reconstruction to Z-up and center its sparse points at the origin.
+        """Rotate the reconstruction to Z-up, ground it on Z=0, and align its main axis with X.
 
         COLMAP camera poses are stored as world-to-camera transforms. Apply the same world rotation
         and translation to camera centers and reconstructed points so the saved poses and PLY remain
@@ -77,55 +101,124 @@ class ScenePreprocessor:
         if not colmap_results.points:
             raise ValueError("COLMAP reconstruction did not produce any 3D points.")
 
-        camera_to_world_rotations = np.stack(
-            [self._quaternion_to_rotation_matrix(pose.rotation).T for pose in colmap_results.poses]
+        point_positions = np.asarray([point.xyz for point in colmap_results.points])
+        world_transform = self._build_world_transform(
+            poses=colmap_results.poses,
+            point_positions=point_positions,
         )
-        average_camera_up = -camera_to_world_rotations[:, :, 1].mean(axis=0)
-        if np.linalg.norm(average_camera_up) < 1e-6:
-            raise ValueError("Could not determine an average camera up direction from the COLMAP poses.")
-
-        world_rotation = self._rotation_between_vectors(
-            source=average_camera_up,
-            target=np.array([0.0, 0.0, 1.0]),
-        )
-        rotated_point_positions = np.stack([world_rotation @ np.asarray(point.xyz) for point in colmap_results.points])
-        world_translation = -rotated_point_positions.mean(axis=0)
+        processed_point_positions = world_transform.apply_to_positions(point_positions)
 
         processed_poses = [
             self._rotate_pose(
                 pose=pose,
-                world_rotation=world_rotation,
-                world_translation=world_translation,
+                world_transform=world_transform,
             )
             for pose in colmap_results.poses
         ]
         processed_points = [
             ColmapPoint(
                 point_id=point.point_id,
-                xyz=(rotated_position + world_translation).tolist(),
+                xyz=processed_position.tolist(),
                 rgb=point.rgb,
                 error=point.error,
                 track_length=point.track_length,
             )
-            for point, rotated_position in zip(
+            for point, processed_position in zip(
                 colmap_results.points,
-                rotated_point_positions,
+                processed_point_positions,
                 strict=True,
             )
         ]
 
-        logger.info("Rotated and centered the COLMAP reconstruction in a Z-up coordinate system.")
+        logger.info("Rotated and grounded the COLMAP reconstruction with its main axis aligned to X.")
         return ColmapResults(
             poses=processed_poses,
             intrinsics=colmap_results.intrinsics,
             points=processed_points,
         )
 
+    def _build_world_transform(
+        self,
+        poses: list[ColmapPose],
+        point_positions: np.ndarray,
+    ) -> WorldCoordinateTransform:
+        """Build one transform shared by every sparse point and camera pose."""
+        average_camera_up = self._average_camera_up_direction(poses)
+        rotate_to_z_up = self._rotation_between_vectors(
+            source=average_camera_up,
+            target=np.array([0.0, 0.0, 1.0]),
+        )
+
+        z_up_point_positions = point_positions @ rotate_to_z_up.T
+        align_main_axis_with_x = self._horizontal_principal_axis_rotation(z_up_point_positions)
+        world_rotation = align_main_axis_with_x @ rotate_to_z_up
+
+        rotated_point_positions = point_positions @ world_rotation.T
+        world_translation = self._center_horizontally_and_ground(rotated_point_positions)
+        return WorldCoordinateTransform(
+            rotation=world_rotation,
+            translation=world_translation,
+        )
+
+    def _average_camera_up_direction(
+        self,
+        poses: list[ColmapPose],
+    ) -> np.ndarray:
+        camera_to_world_rotations = np.stack([self._quaternion_to_rotation_matrix(pose.rotation).T for pose in poses])
+        # COLMAP's camera Y axis points down, so camera up is its negative Y axis.
+        average_camera_up = -camera_to_world_rotations[:, :, 1].mean(axis=0)
+
+        if np.linalg.norm(average_camera_up) < 1e-6:
+            raise ValueError("Could not determine an average camera up direction from the COLMAP poses.")
+
+        return average_camera_up
+
+    @staticmethod
+    def _center_horizontally_and_ground(
+        point_positions: np.ndarray,
+    ) -> np.ndarray:
+        point_center = point_positions.mean(axis=0)
+        lowest_point_z = point_positions[:, 2].min()
+        return np.array(
+            [
+                -point_center[0],
+                -point_center[1],
+                -lowest_point_z,
+            ]
+        )
+
+    @staticmethod
+    def _horizontal_principal_axis_rotation(
+        point_positions: np.ndarray,
+    ) -> np.ndarray:
+        """Return a Z-axis rotation that maps the dominant horizontal PCA direction to positive X."""
+        centered_xy = point_positions[:, :2] - point_positions[:, :2].mean(axis=0)
+        covariance = centered_xy.T @ centered_xy
+        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+
+        if eigenvalues[-1] < 1e-12:
+            return np.eye(3)
+
+        principal_axis = eigenvectors[:, -1]
+        largest_component = np.argmax(np.abs(principal_axis))
+        if principal_axis[largest_component] < 0.0:
+            principal_axis = -principal_axis
+
+        angle = np.arctan2(principal_axis[1], principal_axis[0])
+        cosine = np.cos(angle)
+        sine = np.sin(angle)
+        return np.array(
+            [
+                [cosine, sine, 0.0],
+                [-sine, cosine, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+
     @staticmethod
     def _rotate_pose(
         pose: ColmapPose,
-        world_rotation: np.ndarray,
-        world_translation: np.ndarray,
+        world_transform: WorldCoordinateTransform,
     ) -> ColmapPose:
         rotation_world_to_camera = ScenePreprocessor._quaternion_to_rotation_matrix(pose.rotation)
         translation_world_to_camera = np.array(
@@ -136,10 +229,12 @@ class ScenePreprocessor:
             ]
         )
 
-        camera_center_world = -rotation_world_to_camera.T @ translation_world_to_camera
-        processed_rotation_world_to_camera = rotation_world_to_camera @ world_rotation.T
-        processed_camera_center_world = world_rotation @ camera_center_world + world_translation
-        processed_translation_world_to_camera = -processed_rotation_world_to_camera @ processed_camera_center_world
+        processed_rotation_world_to_camera, processed_translation_world_to_camera = (
+            world_transform.apply_to_world_to_camera_pose(
+                rotation_world_to_camera=rotation_world_to_camera,
+                translation_world_to_camera=translation_world_to_camera,
+            )
+        )
 
         quaternion = ScenePreprocessor._rotation_matrix_to_quaternion(processed_rotation_world_to_camera)
         return ColmapPose(
@@ -266,16 +361,13 @@ class ScenePreprocessor:
 
     def _save_intrinsics_json(
         self,
-        intrinsics: list[ColmapIntrinsic],
+        intrinsics: ColmapIntrinsic,
     ) -> None:
         output_path = self.output_folder / self.configuration.intrinsics_filename
 
         with open(output_path, "w") as file:
             json.dump(
-                [
-                    {key: value for key, value in asdict(intrinsic).items() if value is not None}
-                    for intrinsic in intrinsics
-                ],
+                [asdict(intrinsics)],
                 file,
                 indent=2,
             )
@@ -289,8 +381,8 @@ class ScenePreprocessor:
         if len(colmap_results.points) == 0:
             raise ValueError("COLMAP reconstruction did not produce any 3D points.")
 
-        positions = torch.tensor([point.xyz for point in colmap_results.points], dtype=torch.float32)
-        colors_rgb = torch.tensor([point.rgb for point in colmap_results.points], dtype=torch.float32) / 255.0
+        positions = mx.array([point.xyz for point in colmap_results.points], dtype=mx.float32)
+        colors_rgb = mx.array([point.rgb for point in colmap_results.points], dtype=mx.float32) / 255.0
 
         n_points = positions.shape[0]
 
@@ -298,35 +390,37 @@ class ScenePreprocessor:
         NUM_SH_COEFFS = (SH_DEGREE + 1) ** 2
         C0 = 1 / (2 * np.sqrt(np.pi))
         sh_dc = (colors_rgb - 0.5) / C0
-        sh_rest = torch.zeros((n_points, NUM_SH_COEFFS - 1, 3), dtype=torch.float32)
-        sh_coeffs = torch.cat([sh_dc.unsqueeze(1), sh_rest], dim=1)
+        sh_rest = mx.zeros((n_points, NUM_SH_COEFFS - 1, 3), dtype=mx.float32)
+        sh_coeffs = mx.concatenate([mx.expand_dims(sh_dc, axis=1), sh_rest], axis=1)
 
-        # TODO: Explain this
-        positions_np = positions.numpy()
-        K = 3
-        diff = positions_np[:, None, :] - positions_np[None, :, :]
-        dist_sq = np.sum(diff**2, axis=-1)
-        np.fill_diagonal(dist_sq, np.inf)
-        knn_dist = np.sqrt(np.sort(dist_sq, axis=1)[:, :K])
-        avg_dist = np.mean(knn_dist, axis=1).clip(min=1e-7)
-        log_scales = np.log(avg_dist * 0.5).astype(np.float32)
-        scales = torch.tensor(log_scales, dtype=torch.float32).unsqueeze(1).repeat(1, 3)
-
-        quaternions = torch.zeros((n_points, 4), dtype=torch.float32)
-        quaternions[:, 0] = 1.0
-
-        opacities = torch.full(
-            (n_points, 1),
-            fill_value=1,
-            dtype=torch.float32,
+        num_nearest_neighbors = 3
+        pairwise_offsets = positions[:, None, :] - positions[None, :, :]
+        squared_distances = mx.sum(pairwise_offsets**2, axis=-1)
+        squared_distances = mx.where(
+            mx.eye(n_points, dtype=mx.bool_),
+            float("inf"),
+            squared_distances,
         )
+        neighbor_distances = mx.sqrt(mx.sort(squared_distances, axis=1)[:, :num_nearest_neighbors])
+        average_neighbor_distances = mx.mean(neighbor_distances, axis=1)
+        log_scales = mx.log(mx.maximum(average_neighbor_distances * 0.5, 1e-7))
+        scales = mx.stack([log_scales, log_scales, log_scales], axis=1)
+
+        quaternions = mx.concatenate(
+            [
+                mx.ones((n_points, 1), dtype=mx.float32),
+                mx.zeros((n_points, 3), dtype=mx.float32),
+            ],
+            axis=1,
+        )
+        opacities = mx.ones((n_points, 1), dtype=mx.float32)
 
         return GaussianCollection.from_tensors(
-            positions=mx.array(positions.numpy()),
-            quaternions=mx.array(quaternions.numpy()),
-            scales=mx.array(scales.numpy()),
-            sh_coeffs=mx.array(sh_coeffs.numpy()),
-            opacities=mx.array(opacities.numpy()),
+            positions=positions,
+            quaternions=quaternions,
+            scales=scales,
+            sh_coeffs=sh_coeffs,
+            opacities=opacities,
         )
 
     def _render_example_image(
@@ -337,20 +431,13 @@ class ScenePreprocessor:
         if self.configuration.example_image_filename is None:
             return
 
-        if not colmap_results.intrinsics or not colmap_results.poses:
-            logger.warning("COLMAP did not produce intrinsics or poses. Skipping example rendering.")
+        if len(colmap_results.poses) == 0:
+            logger.warning("COLMAP did not produce poses. Skipping example rendering.")
             return
 
         example_pose = colmap_results.poses[0]
 
-        camera_meta = next(
-            (
-                c
-                for c in colmap_results.intrinsics
-                if c.camera_id == example_pose.camera_id
-            ),
-            colmap_results.intrinsics[0],
-        )  # fmt:skip
+        camera_meta = colmap_results.intrinsics
 
         height = camera_meta.height
         width = camera_meta.width

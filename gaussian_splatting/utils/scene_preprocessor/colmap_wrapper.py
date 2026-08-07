@@ -45,13 +45,10 @@ class ColmapIntrinsic:
     model: str
     width: int
     height: int
-    fx: float = None
-    fy: float = None
-    cx: float = None
-    cy: float = None
-    f: float = None
-    k: float = None
-    params: list[float] = None
+    fx: float
+    fy: float
+    cx: float
+    cy: float
 
 
 @dataclass
@@ -65,8 +62,8 @@ class ColmapPoint:
 
 @dataclass
 class ColmapResults:
+    intrinsics: ColmapIntrinsic
     poses: list[ColmapPose]
-    intrinsics: list[ColmapIntrinsic]
     points: list[ColmapPoint]
 
 
@@ -189,44 +186,26 @@ class ColmapWrapper:
                 height = int(parts[3])
                 params = [float(p) for p in parts[4:]]
 
-                if model == "PINHOLE":
-                    cameras.append(
-                        ColmapIntrinsic(
-                            camera_id=camera_id,
-                            model=model,
-                            width=width,
-                            height=height,
-                            fx=params[0],
-                            fy=params[1],
-                            cx=params[2],
-                            cy=params[3],
-                        )
-                    )
-                elif model == "SIMPLE_RADIAL":
-                    cameras.append(
-                        ColmapIntrinsic(
-                            camera_id=camera_id,
-                            model=model,
-                            width=width,
-                            height=height,
-                            f=params[0],
-                            cx=params[1],
-                            cy=params[2],
-                            k=params[3],
-                        )
-                    )
-                else:
-                    cameras.append(
-                        ColmapIntrinsic(
-                            camera_id=camera_id,
-                            model=model,
-                            width=width,
-                            height=height,
-                            params=params,
-                        )
-                    )
+                if model != self.CAMERA_MODEL:
+                    raise RuntimeError(f"Only '{self.CAMERA_MODEL}' is supported yet, got '{model}'.")
 
-        return cameras
+                cameras.append(
+                    ColmapIntrinsic(
+                        camera_id=camera_id,
+                        model=model,
+                        width=width,
+                        height=height,
+                        fx=params[0],
+                        fy=params[1],
+                        cx=params[2],
+                        cy=params[3],
+                    )
+                )
+
+        if len(cameras) != 1:
+            raise RuntimeError("COLMAP results got more than 1 camera, not supported yet.")
+
+        return cameras[0]
 
     def _parse_images(
         self,
