@@ -42,3 +42,5 @@ This project implements the method described in:
 - Use metal for parallel tile rasterizing.
 - Choose a convention for the camera. If it is not the same as colmap, hanle it directly in colmap, not in the dataset or renderer class.
 - Use uv.
+- Here I consider all the gaussians for rendering and training. Select only the visible gaussians to be more effective on large scenes.
+- Use drawings to explain inference pipelines.
