@@ -220,12 +220,12 @@ class Renderer:
         image: np.ndarray,
         camera: Camera,
         axis_length: float = 0.5,
-        thickness: int = 2,
+        thickness: int = 1,
+        opacity: float = 0.3,
     ) -> np.ndarray:
-        """Draw X (red), Y (green), Z (blue) world axes onto the image."""
-        # Work in uint8 BGR for OpenCV drawing, then convert back
         img_uint8 = (np.clip(image, 0.0, 1.0) * 255).astype(np.uint8)
         img_bgr = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2BGR)
+        axes_overlay = img_bgr.copy()
 
         origin = np.zeros(3)
         axes = [
@@ -242,7 +242,19 @@ class Renderer:
             end_px = self._project_world_point_to_pixel(point_world=axis_end, camera=camera)
             if end_px is None:
                 continue
-            cv2.line(img_bgr, pt1=origin_px, pt2=end_px, color=color, thickness=thickness)
+
+            direction = np.array(end_px, dtype=np.float64) - np.array(origin_px, dtype=np.float64)
+            direction_norm = np.linalg.norm(direction)
+            if direction_norm == 0.0:
+                continue
+
+            line_extent = np.hypot(image.shape[0], image.shape[1])
+            line_direction = direction / direction_norm
+            line_start = tuple(np.rint(np.array(origin_px) - line_extent * line_direction).astype(int))
+            line_end = tuple(np.rint(np.array(origin_px) + line_extent * line_direction).astype(int))
+            cv2.line(axes_overlay, pt1=line_start, pt2=line_end, color=color, thickness=thickness)
+
+        img_bgr = cv2.addWeighted(axes_overlay, opacity, img_bgr, 1.0 - opacity, 0.0)
 
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         return img_rgb.astype(np.float32) / 255.0
