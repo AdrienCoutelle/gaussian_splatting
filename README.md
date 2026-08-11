@@ -2,6 +2,9 @@
 
 Add simple description and a video example. Explain that it is optimized for apple silicon chips.
 
+![Single-image inference result](docs/assets/single_image_20260811_190518.jpg)
+
+
 
 ## Documentation
 
