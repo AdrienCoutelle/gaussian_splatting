@@ -18,7 +18,6 @@ dependencies = [
   "plyfile",
   "pyyaml",
   "pycolmap",
-  "pygame",
   "pydantic",
 ]
 

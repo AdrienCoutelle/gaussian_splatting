@@ -2,6 +2,12 @@
 
 [← Back to README](../README.md)
 
-Installation
+To install the project and its dependencies, run:
+````
+pip install .
+````
 
-# TODO: update this doc when I will use uv.
+To install the project in editable mode (for development), run:
+````
+pip install -e .
+````
