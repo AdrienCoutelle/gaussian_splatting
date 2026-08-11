@@ -4,10 +4,6 @@ from pydantic import Field
 
 from gaussian_splatting.structures.gaussian import GaussianCollection
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import BaseInferencePipeline
-from gaussian_splatting.structures.inference_pipelines.interactive_pipeline import (
-    InteractiveInferencePipeline,
-    InteractiveInferencePipelineParams,
-)
 from gaussian_splatting.structures.inference_pipelines.orbit_video_inference_pipeline import (
     OrbitPipelineInferenceParams,
     OrbitVideoInferencePipeline,
@@ -22,7 +18,6 @@ PipelineConfig = Annotated[
     (
         SingleImageInferencePipelineParams
         | OrbitPipelineInferenceParams
-        | InteractiveInferencePipelineParams
     ),
     Field(discriminator="name"),
 ]  # fmt:skip
@@ -32,7 +27,6 @@ class InferencePipelineFactory:
     REGISTRY = {
         SingleImageInferencePipelineParams: SingleImageInferencePipeline,
         OrbitPipelineInferenceParams: OrbitVideoInferencePipeline,
-        InteractiveInferencePipelineParams: InteractiveInferencePipeline,
     }
 
     @staticmethod
