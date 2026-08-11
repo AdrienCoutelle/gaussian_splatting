@@ -9,5 +9,5 @@ pip install .
 
 To install the project in editable mode (for development), run:
 ````
-pip install -e .
+pip install -e '.[dev]'
 ````

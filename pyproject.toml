@@ -21,6 +21,11 @@ dependencies = [
   "pydantic",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "ruff",
+]
+
 [project.scripts]
 launch_gaussian_splatting_training = "gaussian_splatting.launch_training:main"
 launch_gaussian_splatting_inference = "gaussian_splatting.launch_inference:main"
