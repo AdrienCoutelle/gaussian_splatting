@@ -22,10 +22,15 @@ launch_gaussian_splatting_inference path/to/your/config.yaml
 
 ## Available inference pipelines
 
+See the [configuration templates](config_templates/inference_pipelines/) for the available inference pipelines.
+
+### Common configuration parameters
+
 ### Single image inference pipeline
 
-TODO
+In this pipeline the camera position is chosen by the user. The camera direction (look at point) can be set by the user or automatically computed to look at the mean of the gaussian collection.
 
 ### Orbit video inference pipeline
 
-TODO
+This pipeline generates an orbiting video by moving a camera around the Gaussian scene while varying its distance and elevation, keeping it pointed at a configured point (or mean of the Gaussian collection if not specified).
+

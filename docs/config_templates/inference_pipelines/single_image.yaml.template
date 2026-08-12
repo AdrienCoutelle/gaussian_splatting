@@ -1,38 +1,19 @@
-# Gaussian point cloud to render.
-ply_file_path: output/<experiment_name>/<run_timestamp>/checkpoints/checkpoint_final.ply
+ply_file_path: path/to/gaussians.ply
 
 renderer_config:
   width: 600
   height: 400
   focal_length: 200
-  gaussian_extent: 3.0
-  tile_size: 16
-  max_gaussians_per_batch: 1024
   draw_axis: false
 
-# Select one supported inference pipeline: orbit or single_image.
 inference_pipeline_config:
-  name: orbit
-  fps: 24
-  n_frames: 100
-  min_radius: 1.5
-  max_radius: 2.5
-  radius_freq: 0.5
-  n_revolutions: 2
-  min_phi: -45
-  max_phi: 90
-  phi_freq: 0.5
-  center: mean
+  name: single_image
+  position: [0.0, 0.0, 1.0]
+  look_at: mean
 
   # Optional. When set, the closest training view is appended to each frame.
   # dataset_config_for_closest_view:
   #   training_images_path: datasets/<dataset>/train
   #   poses_json_path: datasets/<dataset>/poses_colmap.json
 
-# Alternative pipeline:
-# inference_pipeline_config:
-#   name: single_image
-#   position: [0.0, 0.0, 1.0]
-#   look_at: mean
-
-output_folder: output/<experiment_name>_inference
+output_folder: path/to/output_folder
