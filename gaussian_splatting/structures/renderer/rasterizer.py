@@ -2,6 +2,7 @@ import mlx.core as mx
 import numpy as np
 
 from gaussian_splatting.structures.camera import Camera
+from gaussian_splatting.structures.renderer.metal_rasterizer import rasterize_image
 from gaussian_splatting.structures.renderer.screen_gaussian import ScreenSpaceGaussians
 from gaussian_splatting.utils.profiler import profile
 
@@ -94,32 +95,25 @@ class Rasterizer:
             tiles=tiles,
         )
 
+        pixels = Tile(min_x=0, min_y=0, max_x=camera.w, max_y=camera.h).generate_pixel_grid()
         num_tiles_x = (camera.w + self.tile_size - 1) // self.tile_size
-        num_tiles_y = (camera.h + self.tile_size - 1) // self.tile_size
+        pixel_tile_indices = (
+            (pixels[:, 1].astype(mx.int32) // self.tile_size) * num_tiles_x
+            + pixels[:, 0].astype(mx.int32) // self.tile_size
+        ).astype(mx.float32)
+        tile_indices = mx.stack([tile.gaussian_indices for tile in tiles]).astype(mx.float32)
 
-        patches_grid = [[None for _ in range(num_tiles_x)] for _ in range(num_tiles_y)]
-
-        # Render each tile using the static-shape compiled pathway
-        for tile_y_idx in range(num_tiles_y):
-            for tile_x_idx in range(num_tiles_x):
-                tile_idx = tile_y_idx * num_tiles_x + tile_x_idx
-                tile = tiles[tile_idx]
-
-                tile_patch = self._render_single_tile(
-                    tile=tile,
-                    padded_means=padded_means,
-                    padded_colors=padded_colors,
-                    padded_opacities=padded_opacities,
-                    padded_conics=padded_conics,
-                    padded_extents=padded_extents,
-                )
-                patches_grid[tile_y_idx][tile_x_idx] = tile_patch
-
-        # Combine patches back into the full image canvas
-        rows = [mx.concatenate(row_patches, axis=1) for row_patches in patches_grid]
-        image = mx.concatenate(rows, axis=0)
-
-        return image
+        image = rasterize_image(
+            pixels,
+            padded_means,
+            padded_conics,
+            padded_colors,
+            padded_opacities.reshape(-1),
+            padded_extents,
+            tile_indices,
+            pixel_tile_indices,
+        )
+        return image.reshape(camera.h, camera.w, 3)
 
     def _get_sorted_gaussians(
         self,
@@ -229,107 +223,3 @@ class Rasterizer:
                 padded_indices = indices
 
             tile.gaussian_indices = mx.array(padded_indices, dtype=mx.int32)
-
-    def _render_single_tile(
-        self,
-        tile: Tile,
-        padded_means: mx.array,
-        padded_colors: mx.array,
-        padded_opacities: mx.array,
-        padded_conics: mx.array,
-        padded_extents: mx.array,
-    ) -> mx.array:
-        tile_pixels = tile.generate_pixel_grid()
-        tile_indices = tile.gaussian_indices
-
-        # Extract elements using the fixed index slice
-        tile_means = padded_means[tile_indices]
-        tile_colors = padded_colors[tile_indices]
-        tile_opacities = padded_opacities[tile_indices]
-        tile_conics = padded_conics[tile_indices]
-        tile_extents = padded_extents[tile_indices]
-
-        # Call the static, compiled core method
-        tile_image = self._render_tile_core(
-            tile_pixels=tile_pixels,
-            tile_means=tile_means,
-            tile_conics=tile_conics,
-            tile_colors=tile_colors,
-            tile_opacities=tile_opacities,
-            tile_extents=tile_extents,
-            max_gaussians_per_tile=self.max_gaussians_per_tile,
-            max_gaussians_per_batch=self.max_gaussians_per_batch,
-        )
-
-        return tile_image.reshape(tile.height, tile.width, 3)
-
-    @staticmethod
-    @mx.compile
-    def _render_tile_core(
-        tile_pixels: mx.array,
-        tile_means: mx.array,
-        tile_conics: mx.array,
-        tile_colors: mx.array,
-        tile_opacities: mx.array,
-        tile_extents: mx.array,
-        max_gaussians_per_tile: int,
-        max_gaussians_per_batch: int,
-    ) -> mx.array:
-        """
-        Compiled calculation layer. Merges offset math, conics projections,
-        and iterative blending steps into compiled GPU operations.
-        """
-        P = tile_pixels.shape[0]
-        tile_image = mx.zeros((P, 3), dtype=mx.float32)
-        tile_transmittance = mx.ones(P, dtype=mx.float32)
-
-        for start_idx in range(0, max_gaussians_per_tile, max_gaussians_per_batch):
-            end_idx = start_idx + max_gaussians_per_batch
-
-            batch_means = tile_means[start_idx:end_idx].reshape(-1, 2)
-            batch_conics = tile_conics[start_idx:end_idx].reshape(-1, 3)
-            batch_colors = tile_colors[start_idx:end_idx].reshape(-1, 3)
-            batch_opacities = tile_opacities[start_idx:end_idx].reshape(-1)
-            batch_extents = tile_extents[start_idx:end_idx].reshape(-1)
-
-            # 1. Pixel-to-mean offsets
-            d = tile_pixels[None, :, :] - batch_means[:, None, :]  # [G, P, 2]
-            dx = d[:, :, 0]  # [G, P]
-            dy = d[:, :, 1]  # [G, P]
-
-            # 2. Square distance
-            dist_sq = dx**2 + dy**2  # [G, P]
-
-            # 3. Calculate power exponent
-            k_a = batch_conics[:, 0, None]  # [G, 1]
-            k_b = batch_conics[:, 1, None]  # [G, 1]
-            k_c = batch_conics[:, 2, None]  # [G, 1]
-
-            power = -0.5 * (k_a * dx**2 + 2.0 * k_b * dx * dy + k_c * dy**2)  # [G, P]
-
-            # 4. Apply boundaries mask
-            extent_sq = (batch_extents[:, None]) ** 2  # [G, 1]
-            inside_mask = (dist_sq <= extent_sq) & (power <= 0.0)
-
-            # 5. Compute alpha
-            alpha = batch_opacities[:, None] * mx.exp(power)  # [G, P]
-            alpha = mx.where(inside_mask, alpha, 0.0)
-
-            # 6. Cumulative blending
-            ones = mx.ones((1, P), dtype=mx.float32)
-            padded = mx.concatenate([ones, 1.0 - alpha[:-1]], axis=0)
-            T_local = mx.cumprod(padded, axis=0)  # [G, P]
-
-            T_global = tile_transmittance[None, :] * T_local  # [G, P]
-
-            # 7. Render accumulations
-            weights = T_global * alpha  # [G, P]
-            colors = batch_colors[:, None, :]  # [G, 1, 3]
-
-            tile_image_delta = mx.sum(weights[:, :, None] * colors, axis=0)  # [P, 3]
-            tile_image = tile_image + tile_image_delta
-
-            # Update base transmittance for the next batch iteration
-            tile_transmittance = tile_transmittance * mx.prod(1.0 - alpha, axis=0)
-
-        return tile_image
