@@ -1,0 +1,19 @@
+ply_file_path: path/to/gaussians.ply
+
+renderer_config:
+  width: 600
+  height: 400
+  focal_length: 200
+  draw_axis: false
+
+inference_pipeline_config:
+  name: single_image
+  position: [0.0, 0.0, 1.0]
+  look_at: mean
+
+  # Optional. When set, the closest training view is appended to each frame.
+  # dataset_config_for_closest_view:
+  #   training_images_path: datasets/<dataset>/train
+  #   poses_json_path: datasets/<dataset>/poses_colmap.json
+
+output_folder: path/to/output_folder

@@ -1,0 +1,27 @@
+ply_file_path: path/to/gaussians.ply
+
+renderer_config:
+  width: 600
+  height: 400
+  focal_length: 200
+  draw_axis: false
+
+inference_pipeline_config:
+  name: orbit
+  fps: 24
+  n_frames: 100
+  min_radius: 1.5
+  max_radius: 2.5
+  radius_freq: 0.5
+  n_revolutions: 2
+  min_phi: -45
+  max_phi: 90
+  phi_freq: 0.5
+  center: mean
+
+  # Optional. When set, the closest training view is appended to each frame.
+  # dataset_config_for_closest_view:
+  #   training_images_path: path/to/images/folder
+  #   poses_json_path: path/to/poses/json
+
+output_folder: path/to/output_folder

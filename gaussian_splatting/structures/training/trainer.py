@@ -43,7 +43,7 @@ class TrainerConfig(BaseModel):
     log_every_n_epochs: int = 5  # log metrics + image to TensorBoard every N epochs
 
     # Simplified Densification Settings
-    densification_interval: int = 50  # Run densification every N steps
+    densification_interval: int = 10  # Run densification every N steps
     prune_opacity_threshold: float = 0.005
     densify_grad_threshold: float = 0.0002
     split_scale_threshold: float = 0.01

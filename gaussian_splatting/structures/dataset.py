@@ -91,8 +91,8 @@ class GaussianSplattingDataset:
         tz: float,
     ) -> mx.array:
         """
-        Convert a COLMAP world-to-camera pose to a camera-to-world matrix in the OpenGL convention
-        (X right, Y up, -Z forward). COLMAP stores: p_cam = R_cw @ p_world + t_cw.
+        Convert a COLMAP world-to-camera pose to a camera-to-world matrix in the CV2/COLMAP convention
+        (X right, Y down, Z forward). COLMAP stores: p_cam = R_cw @ p_world + t_cw.
         """
         q = np.array([qw, qx, qy, qz], dtype=np.float64)
         q /= np.linalg.norm(q)
@@ -114,10 +114,6 @@ class GaussianSplattingDataset:
         pose = np.eye(4, dtype=np.float32)
         pose[:3, :3] = R_wc
         pose[:3, 3] = C_world
-
-        # COLMAP convention (Y down, Z forward) → OpenGL convention (Y up, -Z forward)
-        flip = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)  # TODO: This should not be done here.
-        pose = pose @ flip
 
         return mx.array(pose, dtype=mx.float32)
 
