@@ -31,7 +31,6 @@ class InferenceLauncher:
         logger.info(f"Loaded {len(gaussian_collection.positions)} gaussians from PLY file.")
 
         renderer = Renderer(self.config.renderer_config)
-
         self.pipeline = InferencePipelineFactory.create(
             renderer=renderer,
             gaussians=gaussian_collection,

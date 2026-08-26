@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "gaussian_splatting"
 readme = "README.md"
 dynamic = ["version"]
+
+# TODO: fix version and clean unused dependencies
 dependencies = [
   "matplotlib",
   "torch",
@@ -18,8 +20,12 @@ dependencies = [
   "plyfile",
   "pyyaml",
   "pycolmap",
-  "pygame",
   "pydantic",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff",
 ]
 
 [project.scripts]

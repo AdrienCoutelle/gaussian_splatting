@@ -36,14 +36,14 @@ class TrainerConfig(BaseModel):
 
     epochs: Annotated[int, Field(gt=0)]
     learning_rates: LearningRatesConfig
-    save_every_n_epochs: int = 50
+    save_every_n_epochs: int = 25
     render_scale: Annotated[float, Field(gt=0.0, le=1.0)] = 1.0
     gradient_accumulation_steps: Annotated[int, Field(gt=0)] = 1
     max_gaussians_per_step: int = 0  # 0 = no limit; positive = random subsample per step
     log_every_n_epochs: int = 5  # log metrics + image to TensorBoard every N epochs
 
     # Simplified Densification Settings
-    densification_interval: int = 50  # Run densification every N steps
+    densification_interval: int = 10  # Run densification every N steps
     prune_opacity_threshold: float = 0.005
     densify_grad_threshold: float = 0.0002
     split_scale_threshold: float = 0.01

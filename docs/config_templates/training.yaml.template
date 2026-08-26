@@ -1,0 +1,32 @@
+# Paths to the training data and initial Gaussian point cloud.
+training_images_path: datasets/<dataset>/train
+poses_json_path: datasets/<dataset>/poses_colmap.json
+intrinsics_json_path: datasets/<dataset>/intrinsics.json
+ply_path: datasets/<dataset>/gaussians.ply
+
+# Maximum spherical harmonics degree and scene scale.
+max_sh_degree: 3
+scale: 1
+
+trainer_config:
+  epochs: 100
+  learning_rates:
+    lr_positions: 16e-5
+    lr_opacities: 5e-2
+    lr_scales: 5e-3
+    lr_quaternions: 1e-3
+    lr_sh_coeffs: 25e-4
+
+  save_every_n_epochs: 50
+  render_scale: 1.0
+  gradient_accumulation_steps: 8
+  max_gaussians_per_step: 3000
+  log_every_n_epochs: 5
+
+  # Densification and pruning settings.
+  densification_interval: 10
+  prune_opacity_threshold: 0.005
+  densify_grad_threshold: 0.0002
+  split_scale_threshold: 0.01
+
+output_folder: output/<experiment_name>
