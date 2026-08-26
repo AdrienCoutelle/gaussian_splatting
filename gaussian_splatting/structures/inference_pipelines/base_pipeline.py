@@ -57,8 +57,8 @@ class BaseInferencePipeline(ABC):
                     ]
                 ]
             )  # (1, 4)
-            R_cw = np.array(_quaternions_to_rotation_matrices(q)[0].tolist(), dtype=np.float64)
-            t_cw = np.array(
+            R_wc = np.array(_quaternions_to_rotation_matrices(q)[0].tolist(), dtype=np.float64)
+            t_wc = np.array(
                 [
                     entry["position"]["x"],
                     entry["position"]["y"],
@@ -66,7 +66,7 @@ class BaseInferencePipeline(ABC):
                 ],
                 dtype=np.float64,
             )
-            camera_position = (R_cw @ t_cw).astype(np.float32)
+            camera_position = (-R_wc.T @ t_wc).astype(np.float32)
 
             distance = np.linalg.norm(camera_position - target_position)
             if distance < min_distance:
