@@ -36,7 +36,7 @@ class TrainerConfig(BaseModel):
 
     epochs: Annotated[int, Field(gt=0)]
     learning_rates: LearningRatesConfig
-    save_every_n_epochs: int = 50
+    save_every_n_epochs: int = 25
     render_scale: Annotated[float, Field(gt=0.0, le=1.0)] = 1.0
     gradient_accumulation_steps: Annotated[int, Field(gt=0)] = 1
     max_gaussians_per_step: int = 0  # 0 = no limit; positive = random subsample per step
