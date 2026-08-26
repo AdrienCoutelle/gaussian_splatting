@@ -125,7 +125,7 @@ class TrainingLauncher:
         try:
             self.trainer.run()
         except KeyboardInterrupt:
-            logger.info("Training interrupted by user. Saving checkpoint...")
-            self.trainer._save_checkpoint()
+            logger.info("Training interrupted by user.")
         finally:
+            self.trainer._save_checkpoint()
             Profiler.print_stats()
