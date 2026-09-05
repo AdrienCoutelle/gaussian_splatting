@@ -12,6 +12,7 @@ Add simple description and a video example. Explain that it is optimized for app
 - [Gaussian PLY format](docs/ply-format.md)
 - [Dataset preparation with COLMAP](docs/dataset-preparation.md)
 - [Inference pipelines](docs/inference.md)
+- [Web app](docs/web-app.md)
 - [Training](docs/training.md)
 
 ## References
