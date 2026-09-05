@@ -126,7 +126,6 @@ class Renderer:
         camera_means = gaussians.positions
         depths = camera_means[:, 2]
 
-        # Cull Gaussians behind the camera (depth ≤ 0 produces invalid projections)
         valid_mask = depths > 0.0
         valid_indices = mx.array(np.where(np.array(valid_mask))[0], dtype=mx.int32)
         if valid_indices.shape[0] == 0:
