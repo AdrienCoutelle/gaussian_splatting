@@ -1,3 +1,4 @@
+import mlx.core as mx
 import numpy as np
 import streamlit as st
 
@@ -95,7 +96,7 @@ class GaussianSplattingApp:
         pose[:3, 3] = position
 
         camera = Camera(
-            pose=pose,
+            pose=mx.array(pose),
             width=width,
             height=height,
             focal_length=focal_length,
