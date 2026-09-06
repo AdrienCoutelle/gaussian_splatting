@@ -67,9 +67,9 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
 
         camera = Camera(
             pose=mx.array(pose),
-            focal_length=self.renderer.config.focal_length,
-            width=self.renderer.config.width,
-            height=self.renderer.config.height,
+            focal_length=self.configuration.camera_config.focal_length,
+            width=self.configuration.camera_config.width,
+            height=self.configuration.camera_config.height,
         )
 
         rendered_image = self.renderer.render(

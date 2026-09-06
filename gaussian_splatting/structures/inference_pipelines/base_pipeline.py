@@ -5,7 +5,7 @@ from abc import ABC
 import cv2
 import mlx.core as mx
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.renderer.utils import _quaternions_to_rotation_matrices
 
@@ -15,10 +15,16 @@ class DatasetConfig(BaseModel):
     poses_json_path: str
 
 
-class InferencePipelineParams(BaseModel, ABC):
+class CameraConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     height: int
     width: int
-    focal: int
+    focal_length: float
+
+
+class InferencePipelineParams(BaseModel, ABC):
+    camera_config: CameraConfig
     dataset_config_for_closest_view: DatasetConfig | None = None
 
 

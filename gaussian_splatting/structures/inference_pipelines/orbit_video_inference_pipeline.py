@@ -68,15 +68,15 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
         os.makedirs(self.output_folder, exist_ok=True)
 
         frame_width = (
-            self.renderer.config.width * 2
+            self.configuration.camera_config.width * 2
             if self.configuration.dataset_config_for_closest_view is not None
-            else self.renderer.config.width
+            else self.configuration.camera_config.width
         )
         self.video_writer = cv2.VideoWriter(
             os.path.join(self.output_folder, output_name),
             fourcc,
             self.configuration.fps,
-            (frame_width, self.renderer.config.height),
+            (frame_width, self.configuration.camera_config.height),
         )
 
         self.radius_list = None
@@ -126,9 +126,9 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
 
             camera = Camera(
                 pose=pose,
-                focal_length=self.renderer.config.focal_length,
-                width=self.renderer.config.width,
-                height=self.renderer.config.height,
+                focal_length=self.configuration.camera_config.focal_length,
+                width=self.configuration.camera_config.width,
+                height=self.configuration.camera_config.height,
             )
 
             frame = self.renderer.render(

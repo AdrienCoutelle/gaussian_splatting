@@ -16,9 +16,9 @@ def check_renderer_differentiability(renderer) -> None:
     logger.info("Checking renderer differentiability...")
     camera = Camera(
         pose=mx.eye(4),
-        width=renderer.config.width,
-        height=renderer.config.height,
-        focal_length=renderer.config.focal_length,
+        width=512,
+        height=288,
+        focal_length=50,
     )
 
     positions = mx.array([[0.0, 0.0, -3.0]], dtype=mx.float32)

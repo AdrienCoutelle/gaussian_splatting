@@ -1,13 +1,14 @@
 ply_file_path: path/to/gaussians.ply
 
 renderer_config:
-  width: 600
-  height: 400
-  focal_length: 200
   draw_axis: false
 
 inference_pipeline_config:
   name: single_image
+  camera_config:
+    width: 600
+    height: 400
+    focal_length: 200
   position: [0.0, 0.0, 1.0]
   look_at: mean
 
