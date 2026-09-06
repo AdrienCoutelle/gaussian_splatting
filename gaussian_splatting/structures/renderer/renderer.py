@@ -1,7 +1,7 @@
 import cv2
 import mlx.core as mx
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussians
@@ -17,10 +17,20 @@ logger = Logger("RENDERER")
 class RendererConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    draw_axis: bool = False
+
+    near_plane: float = 0.0
+    far_plane: float = float("inf")
+
     gaussian_extent: float = 3.0
     tile_size: int = 16
     max_gaussians_per_batch: int = 1024
-    draw_axis: bool = False
+
+    @model_validator(mode="after")
+    def validate_clipping_planes(self) -> "RendererConfig":
+        if self.near_plane > self.far_plane:
+            raise ValueError("near_plane must be less than or equal to far_plane")
+        return self
 
 
 @profile
@@ -107,7 +117,7 @@ class Renderer:
         camera_means = gaussians.positions
         depths = camera_means[:, 2]
 
-        valid_mask = depths > 0.0
+        valid_mask = (depths >= self.config.near_plane) & (depths <= self.config.far_plane)
         valid_indices = mx.array(np.where(np.array(valid_mask))[0], dtype=mx.int32)
         if valid_indices.shape[0] == 0:
             return None

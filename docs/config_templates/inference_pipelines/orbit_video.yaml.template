@@ -2,6 +2,8 @@ ply_file_path: path/to/gaussians.ply
 
 renderer_config:
   draw_axis: false
+  near_plane: 0.1
+  far_plane: 50
 
 inference_pipeline_config:
   name: orbit
