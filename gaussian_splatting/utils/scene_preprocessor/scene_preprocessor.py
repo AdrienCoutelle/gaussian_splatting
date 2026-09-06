@@ -190,9 +190,6 @@ class ScenePreprocessor:
 
         renderer = Renderer(
             RendererConfig(
-                width=width,
-                height=height,
-                focal_length=focal_length,
                 draw_axis=True,
             )
         )

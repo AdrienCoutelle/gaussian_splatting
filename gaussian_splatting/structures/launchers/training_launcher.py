@@ -1,4 +1,3 @@
-import json
 import os
 from datetime import datetime
 
@@ -24,7 +23,6 @@ class TrainingConfig(BaseModel):
     intrinsics_json_path: str
     ply_path: str
     max_sh_degree: int = 1
-    scale: float = 1
 
     trainer_config: TrainerConfig
     output_folder: str
@@ -63,7 +61,7 @@ class TrainingLauncher:
         ply_handler.log_info()
         gaussians = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
 
-        renderer = Renderer(self._build_renderer_config())
+        renderer = Renderer(RendererConfig())
 
         init_date = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_folder = os.path.join(self.configuration.output_folder, init_date)
@@ -74,17 +72,6 @@ class TrainingLauncher:
             dataset=dataset,
             output_folder=output_folder,
             configuration=self.configuration.trainer_config,
-        )
-
-    def _build_renderer_config(self) -> RendererConfig:
-        with open(self.configuration.intrinsics_json_path) as f:
-            intrinsics_data: list[dict] = json.load(f)
-        intrinsics = intrinsics_data[0]
-        scale = self.configuration.scale
-        return RendererConfig(
-            width=int(intrinsics["width"] // scale),
-            height=int(intrinsics["height"] // scale),
-            focal_length=((intrinsics["fx"] + intrinsics["fy"]) / 2.0) / scale,
         )
 
     def run_colmap_if_needed(self) -> None:

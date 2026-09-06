@@ -32,10 +32,6 @@ class Image:
 class RendererConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    width: int
-    height: int
-    focal_length: float
-
     gaussian_extent: float = 3.0
     tile_size: int = 16
     max_gaussians_per_batch: int = 1024

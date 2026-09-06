@@ -16,6 +16,9 @@ class DatasetConfig(BaseModel):
 
 
 class InferencePipelineParams(BaseModel, ABC):
+    height: int
+    width: int
+    focal: int
     dataset_config_for_closest_view: DatasetConfig | None = None
 
 
