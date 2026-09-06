@@ -137,7 +137,7 @@ class OrbitVideoInferencePipeline(BaseInferencePipeline):
             )
 
             frame_bgr = cv2.cvtColor(
-                (frame.array * 255).astype(np.uint8),
+                (frame * 255).astype(np.uint8),
                 cv2.COLOR_RGB2BGR,
             )
 

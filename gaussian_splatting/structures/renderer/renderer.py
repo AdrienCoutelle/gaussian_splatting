@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 import cv2
 import mlx.core as mx
 import numpy as np
@@ -14,19 +12,6 @@ from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.profiler import profile
 
 logger = Logger("RENDERER")
-
-
-@dataclass
-class Image:
-    array: np.ndarray
-
-    @property
-    def height(self) -> int:
-        return self.array.shape[0]
-
-    @property
-    def width(self) -> int:
-        return self.array.shape[1]
 
 
 class RendererConfig(BaseModel):
@@ -56,7 +41,7 @@ class Renderer:
         self,
         camera: Camera,
         gaussians: Gaussians,
-    ) -> Image:
+    ) -> np.ndarray:
         image_array = np.array(
             self.render_tensor(
                 camera=camera,
@@ -67,7 +52,7 @@ class Renderer:
         if self.config.draw_axis:
             image_array = self._draw_axes(image=image_array, camera=camera)
 
-        return Image(array=image_array)
+        return image_array
 
     def render_tensor(
         self,

@@ -200,7 +200,7 @@ class ScenePreprocessor:
                 gaussians=gaussians,
             )
 
-            image_np = (rendered_image.array * 255.0).clip(0, 255).astype(np.uint8)
+            image_np = (rendered_image * 255.0).clip(0, 255).astype(np.uint8)
             image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
             output_image_path = self.output_folder / self.configuration.example_image_filename

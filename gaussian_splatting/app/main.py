@@ -118,7 +118,7 @@ class GaussianSplattingApp:
             image = renderer.render(
                 camera=camera,
                 gaussians=gaussians,
-            ).array
+            )
 
         with col_main:
             self.image_display.render(image)

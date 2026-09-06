@@ -77,7 +77,7 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
             gaussians=self.gaussians,
         )
 
-        image_array = (rendered_image.array * 255).astype(np.uint8)
+        image_array = (rendered_image * 255).astype(np.uint8)
         image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
 
         if self.configuration.dataset_config_for_closest_view is not None:
