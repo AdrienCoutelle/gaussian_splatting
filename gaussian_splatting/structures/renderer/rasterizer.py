@@ -1,5 +1,6 @@
 import mlx.core as mx
 import numpy as np
+from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.renderer.metal_rasterizer import rasterize_image
@@ -33,19 +34,23 @@ class Tile:
         return mx.stack([tile_x_coords, tile_y_coords], axis=-1).reshape(-1, 2)
 
 
+class RasterizerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gaussian_extent: float = 3.0
+    tile_size: int = 16
+    max_gaussians_per_tile: int = 1024
+
+
 @profile
 class Rasterizer:
     def __init__(
         self,
-        gaussian_extent: float,
-        tile_size: int | tuple[int, int],
-        max_gaussians_per_batch: int,
-        max_gaussians_per_tile: int = 1024,
+        config: RasterizerConfig,
     ) -> None:
-        self.gaussian_extent = gaussian_extent
-        self.tile_size = tile_size
-        self.max_gaussians_per_batch = max_gaussians_per_batch
-        self.max_gaussians_per_tile = max_gaussians_per_tile
+        self.gaussian_extent = config.gaussian_extent
+        self.tile_size = config.tile_size
+        self.max_gaussians_per_tile = config.max_gaussians_per_tile
 
     def run(
         self,

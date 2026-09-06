@@ -5,6 +5,8 @@ renderer_config:
   near_plane: 0.1
   far_plane: 50
 
+  rasterizer_config: {} #TODO
+
 inference_pipeline_config:
   name: single_image
   camera_config:

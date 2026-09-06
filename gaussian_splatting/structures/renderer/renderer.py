@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussians
-from gaussian_splatting.structures.renderer.rasterizer import Rasterizer
+from gaussian_splatting.structures.renderer.rasterizer import Rasterizer, RasterizerConfig
 from gaussian_splatting.structures.renderer.screen_gaussian import ScreenSpaceGaussians
 from gaussian_splatting.structures.renderer.utils import _evaluate_sh, _quaternions_to_rotation_matrices
 from gaussian_splatting.utils.logger import Logger
@@ -22,9 +22,7 @@ class RendererConfig(BaseModel):
     near_plane: float = 0.0
     far_plane: float = float("inf")
 
-    gaussian_extent: float = 3.0
-    tile_size: int = 16
-    max_gaussians_per_batch: int = 1024
+    rasterizer_config: RasterizerConfig
 
     @model_validator(mode="after")
     def validate_clipping_planes(self) -> "RendererConfig":
@@ -41,11 +39,7 @@ class Renderer:
     ) -> None:
         self.config = config
 
-        self.rasterizer = Rasterizer(
-            gaussian_extent=config.gaussian_extent,
-            tile_size=config.tile_size,
-            max_gaussians_per_batch=config.max_gaussians_per_batch,
-        )
+        self.rasterizer = Rasterizer(self.config.rasterizer_config)
 
     def render(
         self,
