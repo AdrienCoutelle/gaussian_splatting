@@ -61,7 +61,7 @@ class TrainingLauncher:
 
         ply_handler = PLYLoader(self.configuration.ply_path)
         ply_handler.log_info()
-        gaussian_collection = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
+        gaussians = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
 
         renderer = Renderer(self._build_renderer_config())
 
@@ -69,7 +69,7 @@ class TrainingLauncher:
         output_folder = os.path.join(self.configuration.output_folder, init_date)
 
         self.trainer = Trainer(
-            gaussians_collection=gaussian_collection,
+            gaussians=gaussians,
             renderer=renderer,
             dataset=dataset,
             output_folder=output_folder,

@@ -1,13 +1,13 @@
 import numpy as np
 import streamlit as st
 
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 
 
 class ControlPanelComponent:
     def render(
         self,
-        gaussian_collection: GaussianCollection | None,
+        gaussians: Gaussians | None,
     ) -> dict:
         config = {}
         st.subheader("Control Panel")
@@ -27,14 +27,14 @@ class ControlPanelComponent:
         look_at_mode = st.radio(
             "Look-at target",
             options=["Mean of Gaussians", "Manual"],
-            index=0 if gaussian_collection is not None else 1,
+            index=0 if gaussians is not None else 1,
             horizontal=True,
         )
 
-        use_mean_look_at = look_at_mode == "Mean of Gaussians" and gaussian_collection is not None
+        use_mean_look_at = look_at_mode == "Mean of Gaussians" and gaussians is not None
         mean_look_at = (
-            np.asarray(gaussian_collection.positions).mean(axis=0)
-            if gaussian_collection is not None
+            np.asarray(gaussians.positions).mean(axis=0)
+            if gaussians is not None
             else np.zeros(3, dtype=np.float32)
         )
         look_at_x, look_at_y, look_at_z = st.columns(3)

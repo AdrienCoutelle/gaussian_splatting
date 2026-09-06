@@ -29,9 +29,9 @@ def main(config_path: str) -> None:
     ply_loader = PLYLoader(runner.output_folder / config.points_filename)
 
     ply_loader.log_info()
-    gaussian_collection = ply_loader.get_gaussians()
-    logger.info(f"Extracted {len(gaussian_collection)} Gaussians from COLMAP output.")
-    logger.info(f"Sample Gaussian: {gaussian_collection.to_list()[0]}")
+    gaussians = ply_loader.get_gaussians()
+    logger.info(f"Extracted {len(gaussians)} Gaussians from COLMAP output.")
+    logger.info(f"Sample Gaussian: {gaussians.to_list()[0]}")
     # TODO: Here are only 3 sh coefficients, I would like to have more
 
     # pycolmap C++ destructors segfault on macOS during interpreter shutdown;

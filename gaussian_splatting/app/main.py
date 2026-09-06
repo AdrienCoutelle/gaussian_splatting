@@ -6,7 +6,7 @@ from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 
 from .components.control_panel import ControlPanelComponent
-from .components.gaussians_loader import GaussianCollectionLoader
+from .components.gaussians_loader import GaussiansLoader
 from .components.image_display import ImageDisplayComponent
 from .components.image_save import ImageSaveComponent
 
@@ -15,7 +15,7 @@ class GaussianSplattingApp:
     def __init__(self):
         st.set_page_config(layout="wide")
         self.control_panel = ControlPanelComponent()
-        self.gaussian_loader = GaussianCollectionLoader()
+        self.gaussians_loader = GaussiansLoader()
         self.image_display = ImageDisplayComponent()
         self.image_saver = ImageSaveComponent()
 
@@ -53,9 +53,9 @@ class GaussianSplattingApp:
         col_sidebar, col_main = st.columns([3, 7])
 
         with col_sidebar:
-            gaussian_collection, filename = self.gaussian_loader.render()
+            gaussians, filename = self.gaussians_loader.render()
             st.markdown("---")
-            config = self.control_panel.render(gaussian_collection)
+            config = self.control_panel.render(gaussians)
             st.markdown("---")
             save_image_container = st.container()
 
@@ -104,9 +104,9 @@ class GaussianSplattingApp:
 
         print("Camera pose:\n", camera.pose)
 
-        print(f"Gaussian collection: {gaussian_collection}")
+        print(f"Gaussians: {gaussians}")
 
-        if gaussian_collection is None:
+        if gaussians is None:
             image = None
         else:
             renderer = Renderer(
@@ -120,7 +120,7 @@ class GaussianSplattingApp:
             )
             image = renderer.render(
                 camera=camera,
-                gaussians=gaussian_collection,
+                gaussians=gaussians,
             ).array
 
         with col_main:

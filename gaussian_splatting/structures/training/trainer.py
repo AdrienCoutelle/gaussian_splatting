@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from tqdm import tqdm
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.renderer.renderer import Renderer
 from gaussian_splatting.utils.differentiability_check import check_renderer_differentiability
 from gaussian_splatting.utils.image import stack_images_horizontally
@@ -53,7 +53,7 @@ class TrainerConfig(BaseModel):
 class Trainer:
     def __init__(
         self,
-        gaussians_collection: GaussianCollection,
+        gaussians: Gaussians,
         renderer: Renderer,
         dataset: GaussianSplattingDataset,
         output_folder: str,
@@ -74,11 +74,11 @@ class Trainer:
         logger.info(f"TensorBoard logs: {tb_log_dir}")
 
         self.params = {
-            "positions": mx.array(gaussians_collection.positions, dtype=mx.float32),
-            "quaternions": mx.array(gaussians_collection.quaternions, dtype=mx.float32),
-            "scales": mx.array(gaussians_collection.scales, dtype=mx.float32),
-            "sh_coeffs": mx.array(gaussians_collection.sh_coeffs, dtype=mx.float32),
-            "opacities": mx.array(gaussians_collection.opacities, dtype=mx.float32),
+            "positions": mx.array(gaussians.positions, dtype=mx.float32),
+            "quaternions": mx.array(gaussians.quaternions, dtype=mx.float32),
+            "scales": mx.array(gaussians.scales, dtype=mx.float32),
+            "sh_coeffs": mx.array(gaussians.sh_coeffs, dtype=mx.float32),
+            "opacities": mx.array(gaussians.opacities, dtype=mx.float32),
         }
 
         self.optimizers = {
@@ -118,7 +118,7 @@ class Trainer:
         self,
         epoch: int | None = None,
     ) -> None:
-        gaussians = self._build_gaussian_collection(self.params)
+        gaussians = self._build_gaussians(self.params)
 
         file_name = (
             f"checkpoint_epoch_{epoch}"
@@ -135,7 +135,7 @@ class Trainer:
     ) -> None:
         gt_image, camera = self.dataset.validation_item
 
-        gaussians = self._build_gaussian_collection(self.params)
+        gaussians = self._build_gaussians(self.params)
 
         t0 = datetime.datetime.now()
         image = self.renderer.render_tensor(
@@ -203,7 +203,7 @@ class Trainer:
         num_rendered = 0
 
         def loss_fn(params, camera, gt_image):
-            gaussians = self._build_gaussian_collection(params)
+            gaussians = self._build_gaussians(params)
             image = self.renderer.render_tensor(
                 camera=camera,
                 gaussians=gaussians,
@@ -390,11 +390,11 @@ class Trainer:
     ) -> mx.array:
         return mx.mean(mx.abs(image - gt_image))
 
-    def _build_gaussian_collection(
+    def _build_gaussians(
         self,
         params: dict[str, mx.array],
-    ) -> GaussianCollection:
-        return GaussianCollection.from_tensors(
+    ) -> Gaussians:
+        return Gaussians.from_tensors(
             positions=params["positions"],
             quaternions=params["quaternions"],
             scales=params["scales"],

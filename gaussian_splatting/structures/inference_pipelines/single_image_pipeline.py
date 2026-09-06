@@ -8,7 +8,7 @@ import numpy as np
 from pydantic import ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
@@ -28,7 +28,7 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
         renderer: Renderer,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
         configuration: SingleImageInferencePipelineParams,
         output_folder: str,
         epoch: int | None = None,

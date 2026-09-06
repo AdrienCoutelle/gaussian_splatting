@@ -6,7 +6,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.renderer.rasterizer import Rasterizer
 from gaussian_splatting.structures.renderer.screen_gaussian import ScreenSpaceGaussians
 from gaussian_splatting.structures.renderer.utils import _evaluate_sh, _quaternions_to_rotation_matrices
@@ -59,7 +59,7 @@ class Renderer:
     def render(
         self,
         camera: Camera,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
     ) -> Image:
         image_array = np.array(
             self.render_tensor(
@@ -76,7 +76,7 @@ class Renderer:
     def render_tensor(
         self,
         camera: Camera,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
     ) -> mx.array:
         gaussians = self._transform_positions_to_camera_space(
             camera=camera,
@@ -101,14 +101,14 @@ class Renderer:
     def _transform_positions_to_camera_space(
         self,
         camera: Camera,
-        gaussians: GaussianCollection,
-    ) -> GaussianCollection:
+        gaussians: Gaussians,
+    ) -> Gaussians:
         r_world_to_camera = camera.pose[:3, :3].T
         camera_center = camera.pose[:3, 3:4]
 
         positions = (r_world_to_camera @ (gaussians.positions.T - camera_center)).T
 
-        return GaussianCollection.from_tensors(
+        return Gaussians.from_tensors(
             positions=positions,
             quaternions=gaussians.quaternions,
             sh_coeffs=gaussians.sh_coeffs,
@@ -119,7 +119,7 @@ class Renderer:
     def _project_to_screen_space(
         self,
         camera: Camera,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
     ) -> ScreenSpaceGaussians | None:
         principal_point_x, principal_point_y = camera.principal_point
 
@@ -185,7 +185,7 @@ class Renderer:
 
     def _get_color(
         self,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
         camera: Camera,
     ) -> mx.array:
         pose = camera.pose

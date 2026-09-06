@@ -1,7 +1,7 @@
 import mlx.core as mx
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.renderer.renderer import ScreenSpaceGaussians
 from gaussian_splatting.utils.logger import Logger
 
@@ -28,7 +28,7 @@ def check_renderer_differentiability(renderer) -> None:
     opacities = mx.array([[0.9]], dtype=mx.float32)
 
     def step1_loss(p):
-        g = GaussianCollection.from_tensors(
+        g = Gaussians.from_tensors(
             positions=p,
             quaternions=quaternions,
             scales=scales,
@@ -50,7 +50,7 @@ def check_renderer_differentiability(renderer) -> None:
     logger.info("Step 1 (Transform to Camera Space) is differentiable.")
 
     def step2_loss(p, q, s, sh, o):
-        g = GaussianCollection.from_tensors(
+        g = Gaussians.from_tensors(
             positions=p,
             quaternions=q,
             scales=s,

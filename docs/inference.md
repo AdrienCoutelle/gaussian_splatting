@@ -28,9 +28,9 @@ See the [configuration templates](config_templates/inference_pipelines/) for the
 
 ### Single image inference pipeline
 
-In this pipeline the camera position is chosen by the user. The camera direction (look at point) can be set by the user or automatically computed to look at the mean of the gaussian collection.
+In this pipeline the camera position is chosen by the user. The camera direction (look at point) can be set by the user or automatically computed to look at the mean of the gaussians.
 
 ### Orbit video inference pipeline
 
-This pipeline generates an orbiting video by moving a camera around the Gaussian scene while varying its distance and elevation, keeping it pointed at a configured point (or mean of the Gaussian collection if not specified).
+This pipeline generates an orbiting video by moving a camera around the Gaussian scene while varying its distance and elevation, keeping it pointed at a configured point (or mean of the Gaussians if not specified).
 
