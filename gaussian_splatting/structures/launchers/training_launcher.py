@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
+from gaussian_splatting.structures.renderer.rasterizer import RasterizerConfig
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
 from gaussian_splatting.utils.image import is_image
@@ -60,7 +61,7 @@ class TrainingLauncher:
         ply_handler.log_info()
         gaussians = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
 
-        renderer = Renderer(RendererConfig())
+        renderer = Renderer(RendererConfig(rasterizer_config=RasterizerConfig()))
 
         init_date = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_folder = os.path.join(self.configuration.output_folder, init_date)

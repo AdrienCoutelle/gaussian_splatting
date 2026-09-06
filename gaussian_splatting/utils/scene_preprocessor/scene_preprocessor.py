@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussians
+from gaussian_splatting.structures.renderer.rasterizer import RasterizerConfig
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 from gaussian_splatting.structures.renderer.utils import _quaternions_to_rotation_matrices
 from gaussian_splatting.utils.logger import Logger
@@ -191,6 +192,7 @@ class ScenePreprocessor:
         renderer = Renderer(
             RendererConfig(
                 draw_axis=True,
+                rasterizer_config=RasterizerConfig(),
             )
         )
 
