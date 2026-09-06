@@ -126,6 +126,20 @@ class Renderer:
             axis=1,
         )
 
+        visible_mask = (
+            (means_2d[:, 0] >= 0.0)
+            & (means_2d[:, 0] < camera.w)
+            & (means_2d[:, 1] >= 0.0)
+            & (means_2d[:, 1] < camera.h)
+        )
+        visible_indices = mx.array(np.where(np.array(visible_mask))[0], dtype=mx.int32)
+        if visible_indices.shape[0] == 0:
+            return None
+
+        gaussians = gaussians[visible_indices]
+        depths = depths[visible_indices]
+        means_2d = means_2d[visible_indices]
+
         zeros = mx.zeros((gaussians.positions.shape[0],))
         row0 = mx.stack(
             [
@@ -180,24 +194,17 @@ class Renderer:
         dirs_world = dirs_camera @ camera_to_world_rot.T
         return _evaluate_sh(sh_coeffs=gaussians.sh_coeffs, directions=dirs_world)
 
-    def _project_world_point_to_pixel(
+    def _run_rasterization(
         self,
-        point_world: np.ndarray,
+        gaussians: ScreenSpaceGaussians,
         camera: Camera,
-    ) -> tuple[int, int] | None:
-        """Project a 3D world-space point to pixel coordinates. Returns None if behind camera."""
-        pose = np.array(camera.pose)
-        r_world_to_camera = pose[:3, :3].T
-        camera_center = pose[:3, 3]
-        point_camera = r_world_to_camera @ (point_world - camera_center)
+    ) -> None:
+        image = self.rasterizer.run(
+            gaussians=gaussians,
+            camera=camera,
+        )
 
-        if point_camera[2] <= 0.0:
-            return None
-
-        cx, cy = camera.principal_point
-        u = int(camera.f * point_camera[0] / point_camera[2] + cx)
-        v = int(camera.f * point_camera[1] / point_camera[2] + cy)
-        return (u, v)
+        return mx.clip(image, 0.0, 1.0)
 
     def _draw_axes(
         self,
@@ -243,14 +250,21 @@ class Renderer:
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         return img_rgb.astype(np.float32) / 255.0
 
-    def _run_rasterization(
+    def _project_world_point_to_pixel(
         self,
-        gaussians: ScreenSpaceGaussians,
+        point_world: np.ndarray,
         camera: Camera,
-    ) -> None:
-        image = self.rasterizer.run(
-            gaussians=gaussians,
-            camera=camera,
-        )
+    ) -> tuple[int, int] | None:
+        """Project a 3D world-space point to pixel coordinates. Returns None if behind camera."""
+        pose = np.array(camera.pose)
+        r_world_to_camera = pose[:3, :3].T
+        camera_center = pose[:3, 3]
+        point_camera = r_world_to_camera @ (point_world - camera_center)
 
-        return mx.clip(image, 0.0, 1.0)
+        if point_camera[2] <= 0.0:
+            return None
+
+        cx, cy = camera.principal_point
+        u = int(camera.f * point_camera[0] / point_camera[2] + cx)
+        v = int(camera.f * point_camera[1] / point_camera[2] + cy)
+        return (u, v)
