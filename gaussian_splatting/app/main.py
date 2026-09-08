@@ -3,6 +3,7 @@ import numpy as np
 import streamlit as st
 
 from gaussian_splatting.structures.camera import Camera
+from gaussian_splatting.structures.renderer.rasterizer import RasterizerConfig
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 
 from .components.control_panel import ControlPanelComponent
@@ -111,7 +112,7 @@ class GaussianSplattingApp:
         else:
             renderer = Renderer(
                 RendererConfig(
-                    max_gaussians_per_batch=4096,  # TODO: Remove hardcoded value.
+                    rasterizer_config=RasterizerConfig(),
                     draw_axis=config["draw_axis"],
                 )
             )
