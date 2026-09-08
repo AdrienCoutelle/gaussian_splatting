@@ -1,10 +1,10 @@
-import json
 import os
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
+from gaussian_splatting.structures.renderer.rasterizer import RasterizerConfig
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
 from gaussian_splatting.utils.image import is_image
@@ -24,7 +24,6 @@ class TrainingConfig(BaseModel):
     intrinsics_json_path: str
     ply_path: str
     max_sh_degree: int = 1
-    scale: float = 1
 
     trainer_config: TrainerConfig
     output_folder: str
@@ -55,36 +54,24 @@ class TrainingLauncher:
             images_folder_path=self.configuration.training_images_path,
             poses_path=self.configuration.poses_json_path,
             intrinsics_path=self.configuration.intrinsics_json_path,
-            scale=self.configuration.scale,
         )
         logger.info(f"Dataset created with {len(dataset)} entries.")
 
         ply_handler = PLYLoader(self.configuration.ply_path)
         ply_handler.log_info()
-        gaussian_collection = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
+        gaussians = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
 
-        renderer = Renderer(self._build_renderer_config())
+        renderer = Renderer(RendererConfig(rasterizer_config=RasterizerConfig()))
 
         init_date = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_folder = os.path.join(self.configuration.output_folder, init_date)
 
         self.trainer = Trainer(
-            gaussians_collection=gaussian_collection,
+            gaussians=gaussians,
             renderer=renderer,
             dataset=dataset,
             output_folder=output_folder,
             configuration=self.configuration.trainer_config,
-        )
-
-    def _build_renderer_config(self) -> RendererConfig:
-        with open(self.configuration.intrinsics_json_path) as f:
-            intrinsics_data: list[dict] = json.load(f)
-        intrinsics = intrinsics_data[0]
-        scale = self.configuration.scale
-        return RendererConfig(
-            width=int(intrinsics["width"] // scale),
-            height=int(intrinsics["height"] // scale),
-            focal_length=((intrinsics["fx"] + intrinsics["fy"]) / 2.0) / scale,
         )
 
     def run_colmap_if_needed(self) -> None:

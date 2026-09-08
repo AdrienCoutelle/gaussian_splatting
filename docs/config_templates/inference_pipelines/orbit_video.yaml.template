@@ -1,13 +1,18 @@
 ply_file_path: path/to/gaussians.ply
 
 renderer_config:
-  width: 600
-  height: 400
-  focal_length: 200
   draw_axis: false
+  near_plane: 0.1
+  far_plane: 50
+  
+  rasterizer_config: {} #TODO
 
 inference_pipeline_config:
   name: orbit
+  camera_config:
+    width: 600
+    height: 400
+    focal_length: 200
   fps: 24
   n_frames: 100
   min_radius: 1.5

@@ -1,7 +1,7 @@
 import mlx.core as mx
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.renderer.renderer import ScreenSpaceGaussians
 from gaussian_splatting.utils.logger import Logger
 
@@ -16,26 +16,26 @@ def check_renderer_differentiability(renderer) -> None:
     logger.info("Checking renderer differentiability...")
     camera = Camera(
         pose=mx.eye(4),
-        width=renderer.config.width,
-        height=renderer.config.height,
-        focal_length=renderer.config.focal_length,
+        width=512,
+        height=288,
+        focal_length=50,
     )
 
-    positions = mx.array([[0.0, 0.0, -3.0]], dtype=mx.float32)
+    positions = mx.array([[0.0, 0.0, 3.0]], dtype=mx.float32)
     quaternions = mx.array([[1.0, 0.0, 0.0, 0.0]], dtype=mx.float32)
     scales = mx.array([[-1.0, -1.0, -1.0]], dtype=mx.float32)
     sh_coeffs = mx.zeros((1, 16, 3), dtype=mx.float32)
     opacities = mx.array([[0.9]], dtype=mx.float32)
 
     def step1_loss(p):
-        g = GaussianCollection.from_tensors(
+        g = Gaussians.from_tensors(
             positions=p,
             quaternions=quaternions,
             scales=scales,
             sh_coeffs=sh_coeffs,
             opacities=opacities,
         )
-        renderer._transform_positions_to_camera_space(camera, g)
+        g = renderer._transform_positions_to_camera_space(camera, g)
         return mx.mean(g.positions)
 
     _, step1_grads = mx.value_and_grad(step1_loss)(positions)
@@ -50,7 +50,7 @@ def check_renderer_differentiability(renderer) -> None:
     logger.info("Step 1 (Transform to Camera Space) is differentiable.")
 
     def step2_loss(p, q, s, sh, o):
-        g = GaussianCollection.from_tensors(
+        g = Gaussians.from_tensors(
             positions=p,
             quaternions=q,
             scales=s,

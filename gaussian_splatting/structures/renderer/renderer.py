@@ -1,13 +1,11 @@
-from dataclasses import dataclass
-
 import cv2
 import mlx.core as mx
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import GaussianCollection
-from gaussian_splatting.structures.renderer.rasterizer import Rasterizer
+from gaussian_splatting.structures.gaussian import Gaussians
+from gaussian_splatting.structures.renderer.rasterizer import Rasterizer, RasterizerConfig
 from gaussian_splatting.structures.renderer.screen_gaussian import ScreenSpaceGaussians
 from gaussian_splatting.structures.renderer.utils import _evaluate_sh, _quaternions_to_rotation_matrices
 from gaussian_splatting.utils.logger import Logger
@@ -16,30 +14,21 @@ from gaussian_splatting.utils.profiler import profile
 logger = Logger("RENDERER")
 
 
-@dataclass
-class Image:
-    array: np.ndarray
-
-    @property
-    def height(self) -> int:
-        return self.array.shape[0]
-
-    @property
-    def width(self) -> int:
-        return self.array.shape[1]
-
-
 class RendererConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    width: int
-    height: int
-    focal_length: float
-
-    gaussian_extent: float = 3.0
-    tile_size: int = 16
-    max_gaussians_per_batch: int = 1024
     draw_axis: bool = False
+
+    near_plane: float = 0.0
+    far_plane: float = float("inf")
+
+    rasterizer_config: RasterizerConfig
+
+    @model_validator(mode="after")
+    def validate_clipping_planes(self) -> "RendererConfig":
+        if self.near_plane > self.far_plane:
+            raise ValueError("near_plane must be less than or equal to far_plane")
+        return self
 
 
 @profile
@@ -50,17 +39,13 @@ class Renderer:
     ) -> None:
         self.config = config
 
-        self.rasterizer = Rasterizer(
-            gaussian_extent=config.gaussian_extent,
-            tile_size=config.tile_size,
-            max_gaussians_per_batch=config.max_gaussians_per_batch,
-        )
+        self.rasterizer = Rasterizer(self.config.rasterizer_config)
 
     def render(
         self,
         camera: Camera,
-        gaussians: GaussianCollection,
-    ) -> Image:
+        gaussians: Gaussians,
+    ) -> np.ndarray:
         image_array = np.array(
             self.render_tensor(
                 camera=camera,
@@ -71,12 +56,12 @@ class Renderer:
         if self.config.draw_axis:
             image_array = self._draw_axes(image=image_array, camera=camera)
 
-        return Image(array=image_array)
+        return image_array
 
     def render_tensor(
         self,
         camera: Camera,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
     ) -> mx.array:
         gaussians = self._transform_positions_to_camera_space(
             camera=camera,
@@ -101,14 +86,14 @@ class Renderer:
     def _transform_positions_to_camera_space(
         self,
         camera: Camera,
-        gaussians: GaussianCollection,
-    ) -> GaussianCollection:
+        gaussians: Gaussians,
+    ) -> Gaussians:
         r_world_to_camera = camera.pose[:3, :3].T
         camera_center = camera.pose[:3, 3:4]
 
         positions = (r_world_to_camera @ (gaussians.positions.T - camera_center)).T
 
-        return GaussianCollection.from_tensors(
+        return Gaussians.from_tensors(
             positions=positions,
             quaternions=gaussians.quaternions,
             sh_coeffs=gaussians.sh_coeffs,
@@ -119,15 +104,14 @@ class Renderer:
     def _project_to_screen_space(
         self,
         camera: Camera,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
     ) -> ScreenSpaceGaussians | None:
         principal_point_x, principal_point_y = camera.principal_point
 
         camera_means = gaussians.positions
         depths = camera_means[:, 2]
 
-        # Cull Gaussians behind the camera (depth ≤ 0 produces invalid projections)
-        valid_mask = depths > 0.0
+        valid_mask = (depths >= self.config.near_plane) & (depths <= self.config.far_plane)
         valid_indices = mx.array(np.where(np.array(valid_mask))[0], dtype=mx.int32)
         if valid_indices.shape[0] == 0:
             return None
@@ -141,6 +125,20 @@ class Renderer:
             ],
             axis=1,
         )
+
+        visible_mask = (
+            (means_2d[:, 0] >= 0.0)
+            & (means_2d[:, 0] < camera.w)
+            & (means_2d[:, 1] >= 0.0)
+            & (means_2d[:, 1] < camera.h)
+        )
+        visible_indices = mx.array(np.where(np.array(visible_mask))[0], dtype=mx.int32)
+        if visible_indices.shape[0] == 0:
+            return None
+
+        gaussians = gaussians[visible_indices]
+        depths = depths[visible_indices]
+        means_2d = means_2d[visible_indices]
 
         zeros = mx.zeros((gaussians.positions.shape[0],))
         row0 = mx.stack(
@@ -186,7 +184,7 @@ class Renderer:
 
     def _get_color(
         self,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
         camera: Camera,
     ) -> mx.array:
         pose = camera.pose
@@ -196,24 +194,17 @@ class Renderer:
         dirs_world = dirs_camera @ camera_to_world_rot.T
         return _evaluate_sh(sh_coeffs=gaussians.sh_coeffs, directions=dirs_world)
 
-    def _project_world_point_to_pixel(
+    def _run_rasterization(
         self,
-        point_world: np.ndarray,
+        gaussians: ScreenSpaceGaussians,
         camera: Camera,
-    ) -> tuple[int, int] | None:
-        """Project a 3D world-space point to pixel coordinates. Returns None if behind camera."""
-        pose = np.array(camera.pose)
-        r_world_to_camera = pose[:3, :3].T
-        camera_center = pose[:3, 3]
-        point_camera = r_world_to_camera @ (point_world - camera_center)
+    ) -> None:
+        image = self.rasterizer.run(
+            gaussians=gaussians,
+            camera=camera,
+        )
 
-        if point_camera[2] <= 0.0:
-            return None
-
-        cx, cy = camera.principal_point
-        u = int(camera.f * point_camera[0] / point_camera[2] + cx)
-        v = int(camera.f * point_camera[1] / point_camera[2] + cy)
-        return (u, v)
+        return mx.clip(image, 0.0, 1.0)
 
     def _draw_axes(
         self,
@@ -259,14 +250,21 @@ class Renderer:
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         return img_rgb.astype(np.float32) / 255.0
 
-    def _run_rasterization(
+    def _project_world_point_to_pixel(
         self,
-        gaussians: ScreenSpaceGaussians,
+        point_world: np.ndarray,
         camera: Camera,
-    ) -> None:
-        image = self.rasterizer.run(
-            gaussians=gaussians,
-            camera=camera,
-        )
+    ) -> tuple[int, int] | None:
+        """Project a 3D world-space point to pixel coordinates. Returns None if behind camera."""
+        pose = np.array(camera.pose)
+        r_world_to_camera = pose[:3, :3].T
+        camera_center = pose[:3, 3]
+        point_camera = r_world_to_camera @ (point_world - camera_center)
 
-        return mx.clip(image, 0.0, 1.0)
+        if point_camera[2] <= 0.0:
+            return None
+
+        cx, cy = camera.principal_point
+        u = int(camera.f * point_camera[0] / point_camera[2] + cx)
+        v = int(camera.f * point_camera[1] / point_camera[2] + cy)
+        return (u, v)

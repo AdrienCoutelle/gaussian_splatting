@@ -14,11 +14,9 @@ class GaussianSplattingDataset:
         images_folder_path: str,
         poses_path: str,
         intrinsics_path: str,
-        scale: int = 1,
         validation_index: int = 0,
     ) -> None:
         self.images_folder_path = images_folder_path
-        self.scale = scale
 
         with open(poses_path) as f:
             poses_data: list[dict] = json.load(f)
@@ -41,10 +39,9 @@ class GaussianSplattingDataset:
                 tz=entry["position"]["z"],
             )
 
-            # Scale camera width, height, and focal length
-            width = int(intrinsics["width"] // self.scale)
-            height = int(intrinsics["height"] // self.scale)
-            focal_length = ((intrinsics["fx"] + intrinsics["fy"]) / 2.0) / self.scale
+            width = intrinsics["width"]
+            height = intrinsics["height"]
+            focal_length = (intrinsics["fx"] + intrinsics["fy"]) / 2.0
 
             image_name = os.path.splitext(entry["name"])[0]
             items.append(
@@ -142,8 +139,4 @@ class GaussianSplattingDataset:
         img = cv2.imread(path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # Resize image if the scale factor is not 1
-        if self.scale != 1:  # TODO: Remove scaling.
-            img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_AREA)
-
-        return mx.array(img / 255.0, dtype=mx.float16)
+        return mx.array(img / 255.0, dtype=mx.float32)

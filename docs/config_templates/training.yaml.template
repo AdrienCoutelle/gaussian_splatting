@@ -6,7 +6,6 @@ ply_path: datasets/<dataset>/gaussians.ply
 
 # Maximum spherical harmonics degree and scene scale.
 max_sh_degree: 3
-scale: 1
 
 trainer_config:
   epochs: 100
