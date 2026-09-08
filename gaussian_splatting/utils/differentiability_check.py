@@ -21,7 +21,7 @@ def check_renderer_differentiability(renderer) -> None:
         focal_length=50,
     )
 
-    positions = mx.array([[0.0, 0.0, -3.0]], dtype=mx.float32)
+    positions = mx.array([[0.0, 0.0, 3.0]], dtype=mx.float32)
     quaternions = mx.array([[1.0, 0.0, 0.0, 0.0]], dtype=mx.float32)
     scales = mx.array([[-1.0, -1.0, -1.0]], dtype=mx.float32)
     sh_coeffs = mx.zeros((1, 16, 3), dtype=mx.float32)
@@ -35,7 +35,7 @@ def check_renderer_differentiability(renderer) -> None:
             sh_coeffs=sh_coeffs,
             opacities=opacities,
         )
-        renderer._transform_positions_to_camera_space(camera, g)
+        g = renderer._transform_positions_to_camera_space(camera, g)
         return mx.mean(g.positions)
 
     _, step1_grads = mx.value_and_grad(step1_loss)(positions)

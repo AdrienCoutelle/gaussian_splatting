@@ -139,4 +139,4 @@ class GaussianSplattingDataset:
         img = cv2.imread(path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        return mx.array(img / 255.0, dtype=mx.float16)
+        return mx.array(img / 255.0, dtype=mx.float32)

@@ -128,7 +128,9 @@ class ScenePreprocessor:
             ],
             axis=1,
         )
-        opacities = mx.ones((n_points, 1), dtype=mx.float32)
+        initial_opacity = 0.1
+        initial_opacity_logit = np.log(initial_opacity / (1.0 - initial_opacity))
+        opacities = mx.full((n_points, 1), initial_opacity_logit, dtype=mx.float32)
 
         return Gaussians.from_tensors(
             positions=positions,
