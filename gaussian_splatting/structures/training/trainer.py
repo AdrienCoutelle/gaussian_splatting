@@ -146,7 +146,7 @@ class Trainer:
         config = self.configuration
         num_gaussians = self.params["positions"].shape[0]
 
-        should_prune = self.params["opacities"].reshape(-1) < config.prune_opacity_threshold
+        should_prune = mx.sigmoid(self.params["opacities"]).reshape(-1) < config.prune_opacity_threshold
         should_densify = mx.linalg.norm(grads["positions"], axis=-1) > config.densify_grad_threshold
         is_large = mx.max(mx.exp(self.params["scales"]), axis=-1) > config.split_scale_threshold
 
