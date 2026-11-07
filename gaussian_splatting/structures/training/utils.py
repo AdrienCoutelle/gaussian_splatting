@@ -66,3 +66,28 @@ def ssim(
     ssim_map = numerator / denominator
 
     return mx.mean(ssim_map)
+
+
+def _rotate_by_quaternions(
+    vectors: mx.array,
+    quaternions: mx.array,
+) -> mx.array:
+    """Rotates each vector (N, 3) by its unit quaternion (N, 4), stored as (w, x, y, z)."""
+    w = quaternions[:, :1]
+    xyz = quaternions[:, 1:]
+    t = 2.0 * _cross(xyz, vectors)
+    return vectors + w * t + _cross(xyz, t)
+
+
+def _cross(
+    a: mx.array,
+    b: mx.array,
+) -> mx.array:
+    return mx.stack(
+        [
+            a[:, 1] * b[:, 2] - a[:, 2] * b[:, 1],
+            a[:, 2] * b[:, 0] - a[:, 0] * b[:, 2],
+            a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0],
+        ],
+        axis=-1,
+    )

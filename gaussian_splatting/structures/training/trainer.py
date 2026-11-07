@@ -13,13 +13,15 @@ from tqdm import tqdm
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.renderer.renderer import Renderer
-from gaussian_splatting.structures.training.loss import L1Loss, RenderingLoss
-from gaussian_splatting.structures.training.optimizer import GaussianOptimizer, LearningRatesConfig
 from gaussian_splatting.utils.differentiability_check import check_renderer_differentiability
 from gaussian_splatting.utils.image import stack_images_horizontally
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.ply.ply_saver import PLYSaver
 from gaussian_splatting.utils.profiler import profile
+
+from .loss import L1Loss, RenderingLoss
+from .optimizer import GaussianOptimizer, LearningRatesConfig
+from .utils import _rotate_by_quaternions
 
 logger = Logger("TRAINER")
 
@@ -141,13 +143,6 @@ class Trainer:
         self,
         grads: dict[str, mx.array],
     ) -> dict[str, int]:
-        """Prunes transparent Gaussians, then clones small / splits large ones in under-reconstructed areas.
-
-        A Gaussian is under-reconstructed when its view-space positional gradient is large. Small ones are
-        cloned (duplicated in place), large ones are split into two smaller ones sampled inside the original.
-
-        Returns how many Gaussians were pruned, cloned and split, and how many remain.
-        """
         config = self.configuration
         num_gaussians = self.params["positions"].shape[0]
 
@@ -159,7 +154,6 @@ class Trainer:
         should_clone = np.array(should_densify & ~is_large & ~should_prune)
         should_prune = np.array(should_prune)
 
-        # Original Gaussians that survive unchanged, then clones, then the two halves of each split
         keep_idx = np.flatnonzero(~should_prune & ~should_split)
         clone_idx = np.flatnonzero(should_clone)
         split_idx = np.flatnonzero(should_split)
@@ -266,28 +260,3 @@ class Trainer:
             os.path.join(self.validation_images_folder, f"iteration_{iteration:06d}.png"),
             cv2.cvtColor((stacked_validation_image * 255).astype(np.uint8), cv2.COLOR_RGB2BGR),
         )
-
-
-def _rotate_by_quaternions(
-    vectors: mx.array,
-    quaternions: mx.array,
-) -> mx.array:
-    """Rotates each vector (N, 3) by its unit quaternion (N, 4), stored as (w, x, y, z)."""
-    w = quaternions[:, :1]
-    xyz = quaternions[:, 1:]
-    t = 2.0 * _cross(xyz, vectors)
-    return vectors + w * t + _cross(xyz, t)
-
-
-def _cross(
-    a: mx.array,
-    b: mx.array,
-) -> mx.array:
-    return mx.stack(
-        [
-            a[:, 1] * b[:, 2] - a[:, 2] * b[:, 1],
-            a[:, 2] * b[:, 0] - a[:, 0] * b[:, 2],
-            a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0],
-        ],
-        axis=-1,
-    )
