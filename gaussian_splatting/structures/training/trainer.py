@@ -13,7 +13,7 @@ from tqdm import tqdm
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.renderer.renderer import Renderer
-from gaussian_splatting.structures.training.loss import L1Loss, Loss, RenderingLoss
+from gaussian_splatting.structures.training.loss import L1Loss, RenderingLoss
 from gaussian_splatting.structures.training.optimizer import GaussianOptimizer, LearningRatesConfig
 from gaussian_splatting.utils.differentiability_check import check_renderer_differentiability
 from gaussian_splatting.utils.image import stack_images_horizontally
@@ -27,17 +27,16 @@ logger = Logger("TRAINER")
 class TrainerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    iterations: Annotated[int, Field(gt=0)]  # one camera per iteration
+    iterations: Annotated[int, Field(gt=0)]
     learning_rates: LearningRatesConfig
     save_every_n_iterations: Annotated[int, Field(gt=0)] = 5000
     render_scale: Annotated[float, Field(gt=0.0, le=1.0)] = 1.0
     gradient_accumulation_steps: Annotated[int, Field(gt=0)] = 1
     max_gaussians_per_step: int = 0  # 0 = no limit; positive = random subsample per step
-    log_every_n_iterations: Annotated[int, Field(gt=0)] = 100  # train loss + Gaussian count to TensorBoard
-    validate_every_n_iterations: Annotated[int, Field(gt=0)] = 500  # validation loss/PSNR + image (TensorBoard + PNG)
+    log_every_n_iterations: Annotated[int, Field(gt=0)] = 100
+    validate_every_n_iterations: Annotated[int, Field(gt=0)] = 500
 
-    # Simplified Densification Settings
-    densification_interval: int = 10  # Run densification every N steps
+    densification_interval: int = 10
     prune_opacity_threshold: float = 0.005
     densify_grad_threshold: float = 0.0002
     split_scale_threshold: float = 0.01
@@ -52,10 +51,12 @@ class Trainer:
         dataset: GaussianSplattingDataset,
         output_folder: str,
         configuration: TrainerConfig,
-        loss: Loss | None = None,
     ) -> None:
         self.renderer = renderer
-        self.rendering_loss = RenderingLoss(renderer=renderer, loss=loss or L1Loss())
+        self.rendering_loss = RenderingLoss(
+            renderer=renderer,
+            loss=L1Loss(),
+        )
         self.dataset = dataset
         self.output_folder = output_folder
         self.configuration = configuration
@@ -86,83 +87,32 @@ class Trainer:
         logger.info(f"Starting training for {config.iterations} iterations over {len(self.dataset)} cameras.")
 
         running_loss = 0.0
-        self._run_validation(iteration=0)  # baseline before any optimization
+        self._run_validation(iteration=0)
 
         for iteration in tqdm(range(1, config.iterations + 1), desc="Training"):
             running_loss += self._run_iteration(iteration)
 
             if iteration % config.log_every_n_iterations == 0:
                 self.tensorboard_writer.add_scalar(
-                    "Loss/train", running_loss / config.log_every_n_iterations, iteration
+                    tag="Loss/train",
+                    scalar_value=running_loss / config.log_every_n_iterations,
+                    global_step=iteration,
                 )
-                self.tensorboard_writer.add_scalar("Stats/num_gaussians", self._num_gaussians, iteration)
+                self.tensorboard_writer.add_scalar(
+                    tag="Stats/num_gaussians",
+                    scalar_value=self._num_gaussians,
+                    global_step=iteration,
+                )
                 running_loss = 0.0
-
-            if iteration % config.validate_every_n_iterations == 0:
-                self._run_validation(iteration)
 
             if iteration % config.save_every_n_iterations == 0:
                 self._save_checkpoint(iteration)
 
-        if config.iterations % config.validate_every_n_iterations != 0:
-            self._run_validation(config.iterations)
         self.tensorboard_writer.close()
 
     @property
     def _num_gaussians(self) -> int:
         return self.params["positions"].shape[0]
-
-    def _save_checkpoint(
-        self,
-        iteration: int | None = None,
-    ) -> None:
-        gaussians = self._build_gaussians(self.params)
-
-        file_name = (
-            f"checkpoint_iteration_{iteration}"
-            if iteration is not None
-            else "checkpoint_final"
-        )  # fmt:skip
-
-        ply_saver = PLYSaver(os.path.join(self.output_folder, "checkpoints", f"{file_name}.ply"))
-        ply_saver.save_gaussians(gaussians)
-
-    def _run_validation(
-        self,
-        iteration: int,
-    ) -> None:
-        gt_image, camera = self.dataset.validation_item
-
-        gaussians = self._build_gaussians(self.params)
-
-        t0 = datetime.datetime.now()
-        image = self.renderer.render_tensor(
-            camera=camera,
-            gaussians=gaussians,
-        )
-        mx.eval(image)
-        render_time = (datetime.datetime.now() - t0).total_seconds()
-
-        val_loss = self.rendering_loss.evaluate(image, gt_image)
-        mse = mx.mean((mx.clip(image, 0.0, 1.0) - gt_image) ** 2).item()
-        psnr = -10.0 * math.log10(max(mse, 1e-10))
-
-        # Ground truth on the left, render on the right
-        stacked_validation_image = np.clip(
-            stack_images_horizontally(left_image=np.array(gt_image), right_image=np.array(image)), 0.0, 1.0
-        )
-
-        self.tensorboard_writer.add_scalar("Loss/validation", val_loss, iteration)
-        self.tensorboard_writer.add_scalar("Metrics/validation_psnr", psnr, iteration)
-        self.tensorboard_writer.add_scalar("Stats/num_gaussians", self._num_gaussians, iteration)
-        self.tensorboard_writer.add_scalar("Stats/render_time", render_time, iteration)
-        self.tensorboard_writer.add_image("Validation/Image", stacked_validation_image, iteration, dataformats="HWC")
-        self.tensorboard_writer.flush()
-
-        cv2.imwrite(
-            os.path.join(self.validation_images_folder, f"iteration_{iteration:06d}.png"),
-            cv2.cvtColor((stacked_validation_image * 255).astype(np.uint8), cv2.COLOR_RGB2BGR),
-        )
 
     def _run_iteration(
         self,
@@ -241,10 +191,6 @@ class Trainer:
         params: dict[str, mx.array],
         scale_factor: float = 1.6,
     ) -> dict[str, mx.array]:
-        """Replaces each Gaussian by two, sampled from its own distribution and shrunk by `scale_factor`.
-
-        Returns positions and (log-)scales of shape (2 * N, ...): first children, then second children.
-        """
         scales = mx.exp(params["scales"])
         quaternions = params["quaternions"] / mx.linalg.norm(params["quaternions"], axis=-1, keepdims=True)
 
@@ -257,16 +203,68 @@ class Trainer:
             "scales": mx.concatenate([child_scales, child_scales], axis=0),
         }
 
-    def _build_gaussians(
+    def _save_checkpoint(
         self,
-        params: dict[str, mx.array],
-    ) -> Gaussians:
-        return Gaussians.from_tensors(
-            positions=params["positions"],
-            quaternions=params["quaternions"],
-            scales=params["scales"],
-            sh_coeffs=params["sh_coeffs"],
-            opacities=params["opacities"],
+        iteration: int | None = None,
+    ) -> None:
+        gaussians = Gaussians.from_tensors(
+            positions=self.params["positions"],
+            quaternions=self.params["quaternions"],
+            scales=self.params["scales"],
+            sh_coeffs=self.params["sh_coeffs"],
+            opacities=self.params["opacities"],
+        )
+
+        file_name = (
+            f"checkpoint_iteration_{iteration}"
+            if iteration is not None
+            else "checkpoint_final"
+        )  # fmt:skip
+
+        ply_saver = PLYSaver(os.path.join(self.output_folder, "checkpoints", f"{file_name}.ply"))
+        ply_saver.save_gaussians(gaussians)
+
+    def _run_validation(
+        self,
+        iteration: int,
+    ) -> None:
+        gt_image, camera = self.dataset.validation_item
+
+        gaussians = Gaussians.from_tensors(
+            positions=self.params["positions"],
+            quaternions=self.params["quaternions"],
+            scales=self.params["scales"],
+            sh_coeffs=self.params["sh_coeffs"],
+            opacities=self.params["opacities"],
+        )
+
+        t0 = datetime.datetime.now()
+        image = self.renderer.render_tensor(
+            camera=camera,
+            gaussians=gaussians,
+        )
+        mx.eval(image)
+        render_time = (datetime.datetime.now() - t0).total_seconds()
+
+        val_loss = self.rendering_loss.evaluate(image, gt_image)
+        mse = mx.mean((mx.clip(image, 0.0, 1.0) - gt_image) ** 2).item()
+        psnr = -10.0 * math.log10(max(mse, 1e-10))
+
+        # Ground truth on the left, render on the right
+        stacked_validation_image = np.clip(
+            stack_images_horizontally(left_image=np.array(gt_image), right_image=np.array(image)), 0.0, 1.0
+        )
+
+        self.tensorboard_writer.add_scalar("Loss/validation", val_loss, iteration)
+        self.tensorboard_writer.add_scalar("Metrics/validation_psnr", psnr, iteration)
+        self.tensorboard_writer.add_scalar("Stats/num_gaussians", self._num_gaussians, iteration)
+        self.tensorboard_writer.add_scalar("Stats/render_time", render_time, iteration)
+        self.tensorboard_writer.add_image("Validation/Image", stacked_validation_image, iteration, dataformats="HWC")
+        self.tensorboard_writer.flush()
+
+        cv2.imwrite(
+            os.path.join(self.validation_images_folder, f"iteration_{iteration:06d}.png"),
+            cv2.cvtColor((stacked_validation_image * 255).astype(np.uint8), cv2.COLOR_RGB2BGR),
         )
 
 

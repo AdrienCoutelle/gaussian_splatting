@@ -10,15 +10,13 @@ Params = dict[str, mx.array]
 
 
 class Loss(ABC):
-    """Image-space loss comparing a rendered image to its ground truth."""
-
     @abstractmethod
     def compute(
         self,
         image: mx.array,
         gt_image: mx.array,
     ) -> mx.array:
-        """Returns a scalar loss."""
+        pass
 
     def __call__(
         self,
@@ -38,11 +36,6 @@ class L1Loss(Loss):
 
 
 class RenderingLoss:
-    """Renders Gaussian parameters from a camera and scores the result against a ground truth image.
-
-    Hides the autodiff backend: callers only deal with `evaluate` and `value_and_grad`.
-    """
-
     def __init__(
         self,
         renderer: Renderer,
@@ -57,7 +50,6 @@ class RenderingLoss:
         image: mx.array,
         gt_image: mx.array,
     ) -> float:
-        """Scores an already rendered image (no gradients)."""
         return self.loss(image, gt_image).item()
 
     def compute_value_and_grad(
