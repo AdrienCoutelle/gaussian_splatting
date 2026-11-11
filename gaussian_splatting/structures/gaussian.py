@@ -12,7 +12,7 @@ class Gaussian:
     opacity: mx.array
 
 
-class GaussianCollection:
+class Gaussians:
     def __init__(
         self,
         gaussians: list[Gaussian],
@@ -31,18 +31,18 @@ class GaussianCollection:
         scales: mx.array,
         sh_coeffs: mx.array,
         opacities: mx.array,
-    ) -> "GaussianCollection":
-        collection = cls.__new__(cls)
-        collection.positions = positions
-        collection.quaternions = quaternions
-        collection.scales = scales
-        collection.sh_coeffs = sh_coeffs
-        collection.opacities = opacities
+    ) -> "Gaussians":
+        gaussians = cls.__new__(cls)
+        gaussians.positions = positions
+        gaussians.quaternions = quaternions
+        gaussians.scales = scales
+        gaussians.sh_coeffs = sh_coeffs
+        gaussians.opacities = opacities
 
-        return collection
+        return gaussians
 
     def to_list(self) -> list[Gaussian]:
-        """Convert the collection back to a list of individual Gaussians."""
+        """Convert the gaussians back to a list of individual Gaussians."""
         return [
             Gaussian(
                 position=self.positions[i],
@@ -58,7 +58,7 @@ class GaussianCollection:
         return int(self.positions.shape[0])
 
     def __getitem__(self, idx):
-        return GaussianCollection.from_tensors(
+        return Gaussians.from_tensors(
             positions=self.positions[idx],
             quaternions=self.quaternions[idx],
             scales=self.scales[idx],

@@ -93,3 +93,17 @@ def _quaternions_to_rotation_matrices(quaternions: mx.array) -> mx.array:
         ],
         axis=1,
     ).reshape(-1, 3, 3)
+
+
+def _batched_matmul(
+    a: mx.array,
+    b: mx.array,
+) -> mx.array:
+    return (a[:, :, :, None] * b[:, None, :, :]).sum(axis=2)
+
+
+def _batched_matmul_transposed(
+    a: mx.array,
+    b: mx.array,
+) -> mx.array:
+    return (a[:, :, None, :] * b[:, None, :, :]).sum(axis=-1)

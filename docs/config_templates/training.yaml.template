@@ -6,10 +6,15 @@ ply_path: datasets/<dataset>/gaussians.ply
 
 # Maximum spherical harmonics degree and scene scale.
 max_sh_degree: 3
-scale: 1
+
+
+renderer_config:
+  # RGB in [0, 1] behind the Gaussians. RGBA training images are composited over the same color.
+  background_color: [0.0, 0.0, 0.0]
+  rasterizer_config: {}
 
 trainer_config:
-  epochs: 100
+  iterations: 30000
   learning_rates:
     lr_positions: 16e-5
     lr_opacities: 5e-2
@@ -17,16 +22,27 @@ trainer_config:
     lr_quaternions: 1e-3
     lr_sh_coeffs: 25e-4
 
-  save_every_n_epochs: 50
+  save_every_n_iterations: 5000
   render_scale: 1.0
   gradient_accumulation_steps: 8
   max_gaussians_per_step: 3000
-  log_every_n_epochs: 5
+  log_every_n_iterations: 100
+  validate_every_n_iterations: 500
+
+  # Loss = (1 - lambda_dssim) * L1 + lambda_dssim * (1 - SSIM)
+  lambda_dssim: 0.2
 
   # Densification and pruning settings.
-  densification_interval: 10
+  densification_interval: 100
+  densify_from_iteration: 500
+  densify_until_iteration: 15000  # no densification nor opacity reset after this iteration
+  opacity_reset_interval: 3000
+  opacity_reset_value: 0.01
   prune_opacity_threshold: 0.005
   densify_grad_threshold: 0.0002
-  split_scale_threshold: 0.01
+  percent_dense: 0.01  # split instead of clone if largest scale > percent_dense * scene_extent
+  # Size pruning (after the first opacity reset): largest scale > ratio * scene_extent, or screen radius > N px
+  prune_world_size_ratio: 0.1
+  max_screen_size: 20
 
 output_folder: output/<experiment_name>

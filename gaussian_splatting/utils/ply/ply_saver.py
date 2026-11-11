@@ -1,7 +1,7 @@
 import numpy as np
 from plyfile import PlyData, PlyElement
 
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.utils.logger import Logger
 
 logger = Logger("PLY_SAVER")
@@ -16,13 +16,13 @@ class PLYSaver:
 
     def save_gaussians(
         self,
-        gaussians_collection: GaussianCollection,
+        gaussians: Gaussians,
     ) -> None:
-        positions = np.array(gaussians_collection.positions, dtype=np.float32)  # (N, 3)
-        quaternions = np.array(gaussians_collection.quaternions, dtype=np.float32)  # (N, 4)
-        scales = np.array(gaussians_collection.scales, dtype=np.float32)  # (N, 3)
-        sh_coeffs = np.array(gaussians_collection.sh_coeffs, dtype=np.float32)  # (N, num_sh, 3)
-        opacities = np.array(gaussians_collection.opacities, dtype=np.float32)  # (N, 1)
+        positions = np.array(gaussians.positions, dtype=np.float32)  # (N, 3)
+        quaternions = np.array(gaussians.quaternions, dtype=np.float32)  # (N, 4)
+        scales = np.array(gaussians.scales, dtype=np.float32)  # (N, 3)
+        sh_coeffs = np.array(gaussians.sh_coeffs, dtype=np.float32)  # (N, num_sh, 3)
+        opacities = np.array(gaussians.opacities, dtype=np.float32)  # (N, 1)
         if opacities.ndim == 1:
             opacities = opacities[:, np.newaxis]
 

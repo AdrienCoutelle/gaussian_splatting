@@ -8,7 +8,8 @@ import numpy as np
 from pydantic import BaseModel
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
+from gaussian_splatting.structures.renderer.rasterizer import RasterizerConfig
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 from gaussian_splatting.structures.renderer.utils import _quaternions_to_rotation_matrices
 from gaussian_splatting.utils.logger import Logger
@@ -51,14 +52,14 @@ class ScenePreprocessor:
         self._save_poses_json(colmap_results.poses)
         self._save_intrinsics_json(colmap_results.intrinsics)
 
-        gaussian_collection = self._create_gaussian_collection(colmap_results)
+        gaussians = self._create_gaussians(colmap_results)
 
         ply_output_path = self.output_folder / self.configuration.points_filename
         ply_saver = PLYSaver(ply_output_path)
-        ply_saver.save_gaussians(gaussian_collection)
+        ply_saver.save_gaussians(gaussians)
 
         self._render_example_image(
-            gaussian_collection=gaussian_collection,
+            gaussians=gaussians,
             colmap_results=colmap_results,
         )
 
@@ -88,10 +89,10 @@ class ScenePreprocessor:
 
         logger.info(f"Saved camera intrinsics to {output_path}")
 
-    def _create_gaussian_collection(
+    def _create_gaussians(
         self,
         colmap_results: ColmapResults,
-    ) -> GaussianCollection:
+    ) -> Gaussians:
         if len(colmap_results.points) == 0:
             raise ValueError("COLMAP reconstruction did not produce any 3D points.")
 
@@ -127,9 +128,11 @@ class ScenePreprocessor:
             ],
             axis=1,
         )
-        opacities = mx.ones((n_points, 1), dtype=mx.float32)
+        initial_opacity = 0.1
+        initial_opacity_logit = np.log(initial_opacity / (1.0 - initial_opacity))
+        opacities = mx.full((n_points, 1), initial_opacity_logit, dtype=mx.float32)
 
-        return GaussianCollection.from_tensors(
+        return Gaussians.from_tensors(
             positions=positions,
             quaternions=quaternions,
             scales=scales,
@@ -139,7 +142,7 @@ class ScenePreprocessor:
 
     def _render_example_image(
         self,
-        gaussian_collection: GaussianCollection,
+        gaussians: Gaussians,
         colmap_results: ColmapResults,
     ) -> None:
         if self.configuration.example_image_filename is None:
@@ -190,20 +193,18 @@ class ScenePreprocessor:
 
         renderer = Renderer(
             RendererConfig(
-                width=width,
-                height=height,
-                focal_length=focal_length,
                 draw_axis=True,
+                rasterizer_config=RasterizerConfig(),
             )
         )
 
         try:
             rendered_image = renderer.render(
                 camera=camera,
-                gaussians=gaussian_collection,
+                gaussians=gaussians,
             )
 
-            image_np = (rendered_image.array * 255.0).clip(0, 255).astype(np.uint8)
+            image_np = (rendered_image * 255.0).clip(0, 255).astype(np.uint8)
             image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
             output_image_path = self.output_folder / self.configuration.example_image_filename

@@ -3,12 +3,12 @@ import tempfile
 
 import streamlit as st
 
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.utils.ply.ply_loader import PLYLoader
 
 
-class GaussianCollectionLoader:
-    def render(self) -> tuple[GaussianCollection | None, str | None]:
+class GaussiansLoader:
+    def render(self) -> tuple[Gaussians | None, str | None]:
         st.subheader("Model Loader")
         uploaded_file = st.file_uploader(
             "Select PLY File",

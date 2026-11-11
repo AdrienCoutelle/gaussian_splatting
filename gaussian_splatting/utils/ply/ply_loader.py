@@ -2,7 +2,7 @@ import mlx.core as mx
 import numpy as np
 from plyfile import PlyData
 
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.utils.logger import Logger
 
 logger = Logger("PLY_LOADER")
@@ -25,7 +25,7 @@ class PLYLoader:
             f"  Number of gaussians: {len(self.data)}",
         )
 
-    def get_gaussians(self, max_sh_degree: int = 3) -> GaussianCollection:
+    def get_gaussians(self, max_sh_degree: int = 3) -> Gaussians:
         n = len(self.data)
 
         positions = np.stack(
@@ -82,7 +82,7 @@ class PLYLoader:
 
         sh_coeffs = mx.concatenate([sh_dc, sh_rest], axis=1)
 
-        return GaussianCollection.from_tensors(
+        return Gaussians.from_tensors(
             positions=mx.array(positions, dtype=mx.float32),
             quaternions=mx.array(quaternions, dtype=mx.float32),
             scales=mx.array(scales, dtype=mx.float32),

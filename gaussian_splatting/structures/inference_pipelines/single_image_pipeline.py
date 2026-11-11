@@ -8,7 +8,7 @@ import numpy as np
 from pydantic import ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
-from gaussian_splatting.structures.gaussian import GaussianCollection
+from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.inference_pipelines.base_pipeline import (
     BaseInferencePipeline,
     InferencePipelineParams,
@@ -28,7 +28,7 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
     def __init__(
         self,
         renderer: Renderer,
-        gaussians: GaussianCollection,
+        gaussians: Gaussians,
         configuration: SingleImageInferencePipelineParams,
         output_folder: str,
         epoch: int | None = None,
@@ -67,9 +67,9 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
 
         camera = Camera(
             pose=mx.array(pose),
-            focal_length=self.renderer.config.focal_length,
-            width=self.renderer.config.width,
-            height=self.renderer.config.height,
+            focal_length=self.configuration.camera_config.focal_length,
+            width=self.configuration.camera_config.width,
+            height=self.configuration.camera_config.height,
         )
 
         rendered_image = self.renderer.render(
@@ -77,7 +77,7 @@ class SingleImageInferencePipeline(BaseInferencePipeline):
             gaussians=self.gaussians,
         )
 
-        image_array = (rendered_image.array * 255).astype(np.uint8)
+        image_array = (rendered_image * 255).astype(np.uint8)
         image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
 
         if self.configuration.dataset_config_for_closest_view is not None:

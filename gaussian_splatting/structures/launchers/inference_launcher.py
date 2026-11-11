@@ -26,14 +26,14 @@ class InferenceLauncher:
         self.config = config
 
         ply_handler = PLYLoader(file_path=self.config.ply_file_path)
-        gaussian_collection = ply_handler.get_gaussians()
+        gaussians = ply_handler.get_gaussians()
 
-        logger.info(f"Loaded {len(gaussian_collection.positions)} gaussians from PLY file.")
+        logger.info(f"Loaded {len(gaussians.positions)} gaussians from PLY file.")
 
         renderer = Renderer(self.config.renderer_config)
         self.pipeline = InferencePipelineFactory.create(
             renderer=renderer,
-            gaussians=gaussian_collection,
+            gaussians=gaussians,
             configuration=self.config.inference_pipeline_config,
             output_folder=self.config.output_folder,
         )
