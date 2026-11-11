@@ -10,6 +10,7 @@ from pydantic import Field
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
+from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
 from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.renderer.renderer import Renderer
@@ -37,6 +38,8 @@ class TrainerConfig(GaussiansTrainingManagerConfig):
     validate_every_n_iterations: Annotated[int, Field(gt=0)] = 500
 
     lambda_dssim: Annotated[float, Field(ge=0.0, le=1.0)] = 0.2
+
+    warmup_upsample_iterations: list[Annotated[int, Field(gt=0)]] = [250, 500]
 
     densification_interval: Annotated[int, Field(gt=0)] = 100
     densify_from_iteration: Annotated[int, Field(ge=0)] = 500
@@ -117,6 +120,7 @@ class Trainer:
     ) -> float:
         camera_index = mx.random.randint(0, len(self.dataset)).item()
         gt_image, camera = self.dataset[camera_index]
+        gt_image, camera = self._apply_warmup_downscale(iteration, gt_image, camera)
 
         output = self.rendering_loss.compute_value_and_grad(
             params=self.gaussians_manager.params,
@@ -132,6 +136,30 @@ class Trainer:
         )
 
         return output.loss
+
+    def _warmup_downscale_factor(
+        self,
+        iteration: int,
+    ) -> int:
+        """Resolution divisor at this iteration: halves after each upsample iteration, 1 once the warm-up is over."""
+        upsample_iterations = self.configuration.warmup_upsample_iterations
+        remaining_upsamples = sum(iteration <= upsample_at for upsample_at in upsample_iterations)
+        return 2**remaining_upsamples
+
+    def _apply_warmup_downscale(
+        self,
+        iteration: int,
+        gt_image: mx.array,
+        camera: Camera,
+    ) -> tuple[mx.array, Camera]:
+        factor = self._warmup_downscale_factor(iteration)
+        if factor == 1:
+            return gt_image, camera
+
+        camera = camera.downscaled(factor)
+        # Area averaging avoids aliasing when shrinking.
+        gt_image = cv2.resize(np.array(gt_image), (camera.w, camera.h), interpolation=cv2.INTER_AREA)
+        return mx.array(gt_image, dtype=mx.float32), camera
 
     def _run_densification(
         self,

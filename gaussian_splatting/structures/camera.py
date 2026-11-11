@@ -32,3 +32,16 @@ class Camera:
             self.width / 2.0,
             self.height / 2.0,
         )
+
+    def downscaled(
+        self,
+        factor: int,
+    ) -> "Camera":
+        if factor == 1:
+            return self
+        return Camera(
+            pose=self.pose,
+            focal_length=self.focal_length / factor,
+            width=max(1, round(self.width / factor)),
+            height=max(1, round(self.height / factor)),
+        )
