@@ -81,7 +81,6 @@ class GaussiansTrainingManager:
         self,
         grads: Params,
     ) -> None:
-        """Applies one optimizer step to the parameters."""
         self.params = self.optimizer.step(self.params, grads)
         mx.eval(self.params)
 
@@ -91,7 +90,6 @@ class GaussiansTrainingManager:
         visibility: Visibility,
         camera: Camera,
     ) -> None:
-        """Records the view-space gradient, visibility and screen radius of every Gaussian seen by `camera`."""
         visible_indices = visibility.indices
         if visible_indices.shape[0] == 0:
             return
