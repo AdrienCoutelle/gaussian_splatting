@@ -128,7 +128,7 @@ class RenderingLoss:
         image: mx.array,
         gt_image: mx.array,
     ) -> float:
-        return self.loss(image, self.renderer.composite_on_background(gt_image)).item()
+        return self.loss(image, gt_image).item()
 
     def compute_value_and_grad(
         self,
@@ -136,7 +136,6 @@ class RenderingLoss:
         camera: Camera,
         gt_image: mx.array,
     ) -> RenderingLossOutput:
-        gt_image = self.renderer.composite_on_background(gt_image)
         means_2d_offset = mx.zeros((params["positions"].shape[0], 2), dtype=mx.float32)
         visibility: dict[str, Visibility] = {}
 

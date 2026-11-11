@@ -156,7 +156,6 @@ class Trainer:
         iteration: int,
     ) -> None:
         gt_image, camera = self.dataset.validation_item
-        gt_image = self.renderer.composite_on_background(gt_image)
 
         t0 = datetime.datetime.now()
         image = self.renderer.render_tensor(

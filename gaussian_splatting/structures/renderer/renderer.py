@@ -261,16 +261,6 @@ class Renderer:
 
         return mx.clip(image + background, 0.0, 1.0)
 
-    def composite_on_background(
-        self,
-        image: mx.array,
-    ) -> mx.array:
-        if image.shape[-1] != 4:
-            return image
-        background = mx.array(self.config.background_color, dtype=mx.float32)
-        rgb, alpha = image[..., :3], image[..., 3:]
-        return rgb * alpha + background * (1.0 - alpha)
-
     def _background_image(
         self,
         camera: Camera,
