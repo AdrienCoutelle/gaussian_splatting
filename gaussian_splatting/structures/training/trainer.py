@@ -81,6 +81,7 @@ class Trainer:
 
     def run(self) -> None:
         config = self.configuration
+
         logger.info(f"Starting training for {config.iterations} iterations over {len(self.dataset)} cameras.")
 
         running_loss = 0.0
@@ -124,19 +125,34 @@ class Trainer:
         )
         self.gaussians_manager.step(output.grads)
 
-        config = self.configuration
-        if iteration < config.densify_until_iteration:
-            self.gaussians_manager.accumulate_densification_stats(output.view_space_grads, output.visibility, camera)
-
-            if iteration > config.densify_from_iteration and iteration % config.densification_interval == 0:
-                stats = self.gaussians_manager.densify_and_prune(iteration)
-                for name, count in stats.items():
-                    self.tensorboard_writer.add_scalar(f"Densification/{name}", count, iteration)
-
-            if iteration % config.opacity_reset_interval == 0:
-                self.gaussians_manager.reset_opacities()
+        self._run_densification(
+            iteration=iteration,
+            output=output,
+            camera=camera,
+        )
 
         return output.loss
+
+    def _run_densification(
+        self,
+        iteration: int,
+        output,
+        camera,
+    ) -> None:
+        config = self.configuration
+
+        if iteration >= config.densify_until_iteration:
+            return
+
+        self.gaussians_manager.accumulate_densification_stats(output.view_space_grads, output.visibility, camera)
+
+        if iteration > config.densify_from_iteration and iteration % config.densification_interval == 0:
+            stats = self.gaussians_manager.densify_and_prune(iteration)
+            for name, count in stats.items():
+                self.tensorboard_writer.add_scalar(f"Densification/{name}", count, iteration)
+
+        if iteration % config.opacity_reset_interval == 0:
+            self.gaussians_manager.reset_opacities()
 
     def _save_checkpoint(
         self,
