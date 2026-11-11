@@ -1,17 +1,31 @@
+from dataclasses import dataclass
+from typing import Annotated
+
 import cv2
 import mlx.core as mx
 import numpy as np
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from gaussian_splatting.structures.camera import Camera
 from gaussian_splatting.structures.gaussian import Gaussians
 from gaussian_splatting.structures.renderer.rasterizer import Rasterizer, RasterizerConfig
 from gaussian_splatting.structures.renderer.screen_gaussian import ScreenSpaceGaussians
-from gaussian_splatting.structures.renderer.utils import _evaluate_sh, _quaternions_to_rotation_matrices
+from gaussian_splatting.structures.renderer.utils import (
+    _batched_matmul,
+    _batched_matmul_transposed,
+    _evaluate_sh,
+    _quaternions_to_rotation_matrices,
+)
 from gaussian_splatting.utils.logger import Logger
 from gaussian_splatting.utils.profiler import profile
 
 logger = Logger("RENDERER")
+
+
+@dataclass
+class Visibility:
+    indices: np.ndarray
+    screen_radii: mx.array
 
 
 class RendererConfig(BaseModel):
@@ -22,7 +36,13 @@ class RendererConfig(BaseModel):
     near_plane: float = 0.0
     far_plane: float = float("inf")
 
-    rasterizer_config: RasterizerConfig
+    background_color: tuple[
+        Annotated[float, Field(ge=0.0, le=1.0)],
+        Annotated[float, Field(ge=0.0, le=1.0)],
+        Annotated[float, Field(ge=0.0, le=1.0)],
+    ] = (0.0, 0.0, 0.0)
+
+    rasterizer_config: RasterizerConfig = Field(default_factory=RasterizerConfig)
 
     @model_validator(mode="after")
     def validate_clipping_planes(self) -> "RendererConfig":
@@ -63,25 +83,42 @@ class Renderer:
         camera: Camera,
         gaussians: Gaussians,
     ) -> mx.array:
+        image, _ = self.render_tensor_with_visibility(
+            camera=camera,
+            gaussians=gaussians,
+        )
+        return image
+
+    def render_tensor_with_visibility(
+        self,
+        camera: Camera,
+        gaussians: Gaussians,
+        means_2d_offset: mx.array | None = None,
+    ) -> tuple[mx.array, Visibility]:
         gaussians = self._transform_positions_to_camera_space(
             camera=camera,
             gaussians=gaussians,
         )
 
-        screen_space_gaussians = self._project_to_screen_space(
+        screen_space_gaussians, visible_indices = self._project_to_screen_space(
             camera=camera,
             gaussians=gaussians,
+            means_2d_offset=means_2d_offset,
         )
 
         if screen_space_gaussians is None:
-            return mx.zeros((camera.h, camera.w, 3), dtype=mx.float32)
+            empty = Visibility(indices=visible_indices, screen_radii=mx.zeros((0,), dtype=mx.float32))
+            return self._background_image(camera), empty
 
         image = self._run_rasterization(
             gaussians=screen_space_gaussians,
             camera=camera,
         )
 
-        return image
+        screen_radii = mx.stop_gradient(
+            screen_space_gaussians.compute_max_extent(extent_factor=self.rasterizer.gaussian_extent)
+        )
+        return image, Visibility(indices=visible_indices, screen_radii=screen_radii)
 
     def _transform_positions_to_camera_space(
         self,
@@ -105,16 +142,18 @@ class Renderer:
         self,
         camera: Camera,
         gaussians: Gaussians,
-    ) -> ScreenSpaceGaussians | None:
+        means_2d_offset: mx.array | None = None,
+    ) -> tuple[ScreenSpaceGaussians | None, np.ndarray]:
         principal_point_x, principal_point_y = camera.principal_point
 
         camera_means = gaussians.positions
         depths = camera_means[:, 2]
 
         valid_mask = (depths >= self.config.near_plane) & (depths <= self.config.far_plane)
-        valid_indices = mx.array(np.where(np.array(valid_mask))[0], dtype=mx.int32)
-        if valid_indices.shape[0] == 0:
-            return None
+        valid_indices_np = np.flatnonzero(np.array(valid_mask))
+        if valid_indices_np.shape[0] == 0:
+            return None, valid_indices_np
+        valid_indices = mx.array(valid_indices_np, dtype=mx.int32)
         gaussians = gaussians[valid_indices]
         depths = depths[valid_indices]
 
@@ -132,13 +171,17 @@ class Renderer:
             & (means_2d[:, 1] >= 0.0)
             & (means_2d[:, 1] < camera.h)
         )
-        visible_indices = mx.array(np.where(np.array(visible_mask))[0], dtype=mx.int32)
-        if visible_indices.shape[0] == 0:
-            return None
+        visible_indices_np = np.flatnonzero(np.array(visible_mask))
+        original_indices = valid_indices_np[visible_indices_np]
+        if visible_indices_np.shape[0] == 0:
+            return None, original_indices
+        visible_indices = mx.array(visible_indices_np, dtype=mx.int32)
 
         gaussians = gaussians[visible_indices]
         depths = depths[visible_indices]
         means_2d = means_2d[visible_indices]
+        if means_2d_offset is not None:
+            means_2d = means_2d + means_2d_offset[mx.array(original_indices, dtype=mx.int32)]
 
         zeros = mx.zeros((gaussians.positions.shape[0],))
         row0 = mx.stack(
@@ -161,17 +204,14 @@ class Renderer:
 
         scales = mx.exp(gaussians.scales)
         R = _quaternions_to_rotation_matrices(gaussians.quaternions)
-        S_squared = (scales**2)[:, :, None] * mx.eye(3)[None, :, :]
-        world_covariances = R @ S_squared @ mx.transpose(R, (0, 2, 1))
+        RS = R * scales[:, None, :]
+        world_covariances = _batched_matmul_transposed(RS, RS)  # (N, 3, 3)
 
-        pose = camera.pose
-        camera_to_world_rot = pose[:3, :3]
-        world_to_camera_rot = camera_to_world_rot.T
-        camera_covariances = world_to_camera_rot @ world_covariances @ world_to_camera_rot.T
+        world_to_camera_rot = camera.pose[:3, :3].T
+        T = _batched_matmul(jacobians, mx.broadcast_to(world_to_camera_rot, (jacobians.shape[0], 3, 3)))  # J W
+        covariances_2d = _batched_matmul_transposed(_batched_matmul(T, world_covariances), T)  # (N, 2, 2)
 
-        covariances_2d = jacobians @ camera_covariances @ mx.transpose(jacobians, (0, 2, 1))
-
-        return ScreenSpaceGaussians(
+        screen_space_gaussians = ScreenSpaceGaussians(
             means_2d=means_2d,
             covariances_2d=covariances_2d,
             depths=depths,
@@ -181,6 +221,7 @@ class Renderer:
             ),
             opacities=1.0 / (1.0 + mx.exp(-gaussians.opacities)),
         )
+        return screen_space_gaussians, original_indices
 
     def _get_color(
         self,
@@ -198,13 +239,44 @@ class Renderer:
         self,
         gaussians: ScreenSpaceGaussians,
         camera: Camera,
-    ) -> None:
+    ) -> mx.array:
+        """Rasterizes the Gaussians over the background color.
+
+        Blending is linear in the colors and the blending weights sum to 1 - T_final, so rasterizing the colors
+        shifted by -bg and adding bg back gives sum_i w_i c_i + T_final * bg: compositing over the background,
+        with exact gradients (including the background's effect on the opacities) and no kernel change.
+        """
+        background = mx.array(self.config.background_color, dtype=mx.float32)
+        shifted_gaussians = ScreenSpaceGaussians(
+            means_2d=gaussians.means_2d,
+            covariances_2d=gaussians.covariances_2d,
+            depths=gaussians.depths,
+            colors=gaussians.colors - background,
+            opacities=gaussians.opacities,
+        )
         image = self.rasterizer.run(
-            gaussians=gaussians,
+            gaussians=shifted_gaussians,
             camera=camera,
         )
 
-        return mx.clip(image, 0.0, 1.0)
+        return mx.clip(image + background, 0.0, 1.0)
+
+    def composite_on_background(
+        self,
+        image: mx.array,
+    ) -> mx.array:
+        if image.shape[-1] != 4:
+            return image
+        background = mx.array(self.config.background_color, dtype=mx.float32)
+        rgb, alpha = image[..., :3], image[..., 3:]
+        return rgb * alpha + background * (1.0 - alpha)
+
+    def _background_image(
+        self,
+        camera: Camera,
+    ) -> mx.array:
+        background = mx.array(self.config.background_color, dtype=mx.float32)
+        return mx.broadcast_to(background, (camera.h, camera.w, 3))
 
     def _draw_axes(
         self,

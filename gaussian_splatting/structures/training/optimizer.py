@@ -57,6 +57,31 @@ class GaussianOptimizer:
         for optimizer in self._optimizers.values():
             optimizer.state = self._reindex_state(optimizer.state, indices, num_gaussians)
 
+    def reset_state(
+        self,
+        name: str,
+        num_gaussians: int,
+    ) -> None:
+        """Zeroes the per-Gaussian state (e.g. Adam moments) of one parameter group."""
+        optimizer = self._optimizers[name]
+        optimizer.state = self._reset_state(optimizer.state, num_gaussians)
+
+    @classmethod
+    def _reset_state(
+        cls,
+        state: Any,
+        num_gaussians: int,
+    ) -> Any:
+        if isinstance(state, mx.array):
+            if state.ndim > 0 and state.shape[0] == num_gaussians:
+                return mx.zeros_like(state)
+            return state
+        if isinstance(state, dict):
+            return {k: cls._reset_state(v, num_gaussians) for k, v in state.items()}
+        if isinstance(state, list):
+            return [cls._reset_state(v, num_gaussians) for v in state]
+        return state
+
     @classmethod
     def _reindex_state(
         cls,

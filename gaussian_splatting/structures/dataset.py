@@ -69,6 +69,10 @@ class GaussianSplattingDataset:
             else:
                 self.items.append(item)
 
+    @property
+    def cameras(self) -> list[Camera]:
+        return [camera for _, camera in self.items]
+
     def __len__(self) -> int:
         return len(self.items)
 

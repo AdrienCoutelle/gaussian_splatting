@@ -17,6 +17,7 @@ _forward_kernel = mx.fast.metal_kernel(
         "opacities",
         "extents",
         "tile_indices",
+        "tile_offsets",
         "pixel_tile_indices",
     ],
     output_names=["image"],
@@ -33,6 +34,7 @@ _backward_kernel = mx.fast.metal_kernel(
         "opacities",
         "extents",
         "tile_indices",
+        "tile_offsets",
         "pixel_tile_indices",
         "cotangent",
     ],
@@ -44,6 +46,7 @@ _backward_kernel = mx.fast.metal_kernel(
         "opacities_grad",
         "extents_grad",
         "tile_indices_grad",
+        "tile_offsets_grad",
         "pixel_tile_indices_grad",
     ],
     source=_load_kernel_source("rasterize_backward.metal"),
@@ -60,11 +63,12 @@ def rasterize_image(
     opacities: mx.array,
     extents: mx.array,
     tile_indices: mx.array,
+    tile_offsets: mx.array,
     pixel_tile_indices: mx.array,
 ) -> mx.array:
     pixel_count = pixels.shape[0]
     outputs = _forward_kernel(
-        inputs=[pixels, means, conics, colors, opacities, extents, tile_indices, pixel_tile_indices],
+        inputs=[pixels, means, conics, colors, opacities, extents, tile_indices, tile_offsets, pixel_tile_indices],
         output_shapes=[(pixel_count, 3)],
         output_dtypes=[mx.float32],
         grid=(pixel_count, 1, 1),
@@ -79,7 +83,7 @@ def _rasterize_image_vjp(
     cotangent: mx.array,
     _: mx.array,
 ) -> tuple[mx.array, ...]:
-    pixels, means, conics, colors, opacities, extents, tile_indices, pixel_tile_indices = primals
+    pixels, means, conics, colors, opacities, extents, tile_indices, tile_offsets, pixel_tile_indices = primals
     pixel_count = pixels.shape[0]
     outputs = _backward_kernel(
         inputs=[
@@ -90,6 +94,7 @@ def _rasterize_image_vjp(
             opacities,
             extents,
             tile_indices,
+            tile_offsets,
             pixel_tile_indices,
             cotangent,
         ],
@@ -101,9 +106,10 @@ def _rasterize_image_vjp(
             opacities.shape,
             extents.shape,
             tile_indices.shape,
+            tile_offsets.shape,
             pixel_tile_indices.shape,
         ],
-        output_dtypes=[mx.float32] * 8,
+        output_dtypes=[mx.float32] * 9,
         grid=(pixel_count, 1, 1),
         threadgroup=(min(pixel_count, 256), 1, 1),
         init_value=0,

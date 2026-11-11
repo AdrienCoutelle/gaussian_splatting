@@ -1,5 +1,4 @@
 import mlx.core as mx
-import numpy as np
 from pydantic import BaseModel, ConfigDict
 
 from gaussian_splatting.structures.camera import Camera
@@ -39,7 +38,6 @@ class RasterizerConfig(BaseModel):
 
     gaussian_extent: float = 3.0
     tile_size: int = 16
-    max_gaussians_per_tile: int = 1024
 
 
 @profile
@@ -50,7 +48,6 @@ class Rasterizer:
     ) -> None:
         self.gaussian_extent = config.gaussian_extent
         self.tile_size = config.tile_size
-        self.max_gaussians_per_tile = config.max_gaussians_per_tile
 
     def run(
         self,
@@ -92,12 +89,11 @@ class Rasterizer:
             self.gaussian_extent,
         )
 
-        tiles = self._create_tiles(camera)
-
-        # Assign indices padded to self.max_gaussians_per_tile
-        self._compute_tile_participation(
-            sorted_gaussians,
-            tiles=tiles,
+        # Assign each tile all of its overlapping Gaussians, in depth order
+        tile_indices, tile_offsets = self._bin_gaussians_to_tiles(
+            means=mx.stop_gradient(means),
+            radii=mx.stop_gradient(padded_extents[:-1]),
+            camera=camera,
         )
 
         pixels = Tile(min_x=0, min_y=0, max_x=camera.w, max_y=camera.h).generate_pixel_grid()
@@ -106,7 +102,6 @@ class Rasterizer:
             (pixels[:, 1].astype(mx.int32) // self.tile_size) * num_tiles_x
             + pixels[:, 0].astype(mx.int32) // self.tile_size
         ).astype(mx.float32)
-        tile_indices = mx.stack([tile.gaussian_indices for tile in tiles]).astype(mx.float32)
 
         image = rasterize_image(
             pixels,
@@ -116,6 +111,7 @@ class Rasterizer:
             padded_opacities.reshape(-1),
             padded_extents,
             tile_indices,
+            tile_offsets,
             pixel_tile_indices,
         )
         return image.reshape(camera.h, camera.w, 3)
@@ -126,35 +122,6 @@ class Rasterizer:
     ) -> ScreenSpaceGaussians:
         sorted_indices = mx.argsort(gaussians.depths)
         return gaussians[sorted_indices]
-
-    def _create_tiles(
-        self,
-        camera: Camera,
-    ) -> list[Tile]:
-        image_height = camera.h
-        image_width = camera.w
-
-        num_tiles_x = (image_width + self.tile_size - 1) // self.tile_size
-        num_tiles_y = (image_height + self.tile_size - 1) // self.tile_size
-
-        tiles: list[Tile] = []
-        for tile_y_idx in range(num_tiles_y):
-            for tile_x_idx in range(num_tiles_x):
-                tile_min_y = tile_y_idx * self.tile_size
-                tile_max_y = min(tile_min_y + self.tile_size, image_height)
-                tile_min_x = tile_x_idx * self.tile_size
-                tile_max_x = min(tile_min_x + self.tile_size, image_width)
-
-                tiles.append(
-                    Tile(
-                        min_x=tile_min_x,
-                        min_y=tile_min_y,
-                        max_x=tile_max_x,
-                        max_y=tile_max_y,
-                    )
-                )
-
-        return tiles
 
     def _compute_conics_and_extents(
         self,
@@ -184,47 +151,58 @@ class Rasterizer:
 
         return conics, extents
 
-    def _compute_tile_participation(
+    def _bin_gaussians_to_tiles(
         self,
-        sorted_gaussians: ScreenSpaceGaussians,
-        tiles: list[Tile],
-    ) -> None:
-        means_2d = sorted_gaussians.means_2d
+        means: mx.array,
+        radii: mx.array,
+        camera: Camera,
+    ) -> tuple[mx.array, mx.array]:
+        tile_size = self.tile_size
+        num_tiles_x = (camera.w + tile_size - 1) // tile_size
+        num_tiles_y = (camera.h + tile_size - 1) // tile_size
+        num_tiles = num_tiles_x * num_tiles_y
+        num_gaussians = means.shape[0]
+        dummy_entry = mx.array([num_gaussians], dtype=mx.float32)
 
-        _, radii = self._compute_conics_and_extents(
-            sorted_gaussians.covariances_2d,
-            self.gaussian_extent,
+        # Tile range [x0, x1) x [y0, y1) overlapped by each bounding square
+        x0 = mx.clip(mx.floor((means[:, 0] - radii) / tile_size), 0, num_tiles_x).astype(mx.int32)
+        x1 = mx.clip(mx.ceil((means[:, 0] + radii) / tile_size), 0, num_tiles_x).astype(mx.int32)
+        y0 = mx.clip(mx.floor((means[:, 1] - radii) / tile_size), 0, num_tiles_y).astype(mx.int32)
+        y1 = mx.clip(mx.ceil((means[:, 1] + radii) / tile_size), 0, num_tiles_y).astype(mx.int32)
+        widths = mx.maximum(x1 - x0, 0)
+        counts = widths * mx.maximum(y1 - y0, 0)
+
+        ends = mx.cumsum(counts)
+        starts = ends - counts
+        num_entries = int(ends[-1].item()) if num_gaussians > 0 else 0
+        if num_entries == 0:
+            return dummy_entry, mx.zeros((num_tiles + 1,), dtype=mx.float32)
+        if num_entries >= 2**24:
+            # The kernels read indices / offsets as float32, which is exact only up to 2^24
+            raise ValueError(f"Too many Gaussian-tile pairs for float32 indexing: {num_entries}")
+
+        # Entry -> Gaussian: mark each Gaussian's first entry with its index, then propagate with a running max
+        gaussian_ids = mx.arange(num_gaussians, dtype=mx.int32)
+        has_entries = counts > 0
+        first_entry_marks = mx.full((num_entries + 1,), -1, dtype=mx.int32)
+        first_entry_marks = first_entry_marks.at[mx.where(has_entries, starts, num_entries)].maximum(
+            mx.where(has_entries, gaussian_ids, -1)
         )
+        entry_gaussian = mx.cummax(first_entry_marks[:num_entries])
 
-        g_min_x = means_2d[:, 0] - radii
-        g_max_x = means_2d[:, 0] + radii
-        g_min_y = means_2d[:, 1] - radii
-        g_max_y = means_2d[:, 1] + radii
+        local_index = mx.arange(num_entries, dtype=mx.int32) - starts[entry_gaussian]
+        entry_width = widths[entry_gaussian]
+        tile_x = x0[entry_gaussian] + local_index % entry_width
+        tile_y = y0[entry_gaussian] + local_index // entry_width
+        entry_tile = tile_y * num_tiles_x + tile_x
 
-        tile_min_x = mx.array([t.min_x for t in tiles], dtype=mx.float32)[:, None]
-        tile_max_x = mx.array([t.max_x for t in tiles], dtype=mx.float32)[:, None]
-        tile_min_y = mx.array([t.min_y for t in tiles], dtype=mx.float32)[:, None]
-        tile_max_y = mx.array([t.max_y for t in tiles], dtype=mx.float32)[:, None]
+        sort_keys = entry_tile.astype(mx.int64) * num_gaussians + entry_gaussian.astype(mx.int64)
+        tile_indices = entry_gaussian[mx.argsort(sort_keys)]
 
-        overlap = (
-            (g_min_x[None, :] < tile_max_x)
-            & (g_max_x[None, :] > tile_min_x)
-            & (g_min_y[None, :] < tile_max_y)
-            & (g_max_y[None, :] > tile_min_y)
+        entries_per_tile = mx.zeros((num_tiles,), dtype=mx.int32).at[entry_tile].add(1)
+        tile_offsets = mx.concatenate([mx.zeros((1,), dtype=mx.int32), mx.cumsum(entries_per_tile)])
+
+        return (
+            mx.concatenate([tile_indices.astype(mx.float32), dummy_entry]),
+            tile_offsets.astype(mx.float32),
         )
-
-        np_overlap = np.array(overlap)
-        dummy_idx = len(sorted_gaussians)  # Index pointing to our appended transparent dummy Gaussian
-
-        for i, tile in enumerate(tiles):
-            indices = np.flatnonzero(np_overlap[i])
-            if len(indices) > self.max_gaussians_per_tile:
-                indices = indices[: self.max_gaussians_per_tile]
-
-            padding_needed = self.max_gaussians_per_tile - len(indices)
-            if padding_needed > 0:
-                padded_indices = np.concatenate([indices, np.full(padding_needed, dummy_idx, dtype=np.int32)])
-            else:
-                padded_indices = indices
-
-            tile.gaussian_indices = mx.array(padded_indices, dtype=mx.int32)

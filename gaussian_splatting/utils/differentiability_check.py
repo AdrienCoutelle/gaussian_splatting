@@ -58,7 +58,7 @@ def check_renderer_differentiability(renderer) -> None:
             opacities=o,
         )
         renderer._transform_positions_to_camera_space(camera, g)
-        screen_space = renderer._project_to_screen_space(camera, g)
+        screen_space, _ = renderer._project_to_screen_space(camera, g)
 
         if screen_space is None:
             # Return a dummy scalar that still depends on the inputs to avoid breakages,

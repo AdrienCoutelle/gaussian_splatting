@@ -1,6 +1,7 @@
 ply_file_path: path/to/gaussians.ply
 
 renderer_config:
+  background_color: [0.0, 0.0, 0.0]
   draw_axis: false
   near_plane: 0.1
   far_plane: 50

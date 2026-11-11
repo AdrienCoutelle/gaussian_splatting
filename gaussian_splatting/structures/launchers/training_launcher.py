@@ -1,10 +1,9 @@
 import os
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from gaussian_splatting.structures.dataset import GaussianSplattingDataset
-from gaussian_splatting.structures.renderer.rasterizer import RasterizerConfig
 from gaussian_splatting.structures.renderer.renderer import Renderer, RendererConfig
 from gaussian_splatting.structures.training.trainer import Trainer, TrainerConfig
 from gaussian_splatting.utils.image import is_image
@@ -25,6 +24,7 @@ class TrainingConfig(BaseModel):
     ply_path: str
     max_sh_degree: int = 1
 
+    renderer_config: RendererConfig = Field(default_factory=RendererConfig)
     trainer_config: TrainerConfig
     output_folder: str
 
@@ -61,7 +61,7 @@ class TrainingLauncher:
         ply_handler.log_info()
         gaussians = ply_handler.get_gaussians(max_sh_degree=self.configuration.max_sh_degree)
 
-        renderer = Renderer(RendererConfig(rasterizer_config=RasterizerConfig()))
+        renderer = Renderer(self.configuration.renderer_config)
 
         init_date = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_folder = os.path.join(self.configuration.output_folder, init_date)
